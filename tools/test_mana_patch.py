@@ -7,7 +7,7 @@ ctx=runpy.run_path('tools/test_game_patch.py')
 Case,BASE,UNIT,TABLE,STACK,END,n=[ctx[k] for k in ('Case','BASE','UNIT','TABLE','STACK','END','n')]
 cases=0
 for entry,factory,argc in [(0x400,0x54fef0,6),(0x550,0x54f5a0,5)]:
- for maximum in [0,1,99,100,150,200,32767,-1]:
+ for maximum in [0,1,99,100,150,200,300,32767,-1]:
   for success in [True,False]:
    c=Case();u=c.u
    c.method(TABLE,0x234,native=c.ret(maximum))
