@@ -34,6 +34,13 @@ class CompatibilityTest(unittest.TestCase):
         for c in self.clients:c.close()
         for s in [self.server,self.relay]:s.shutdown();s.server_close()
         self.temp.cleanup()
+    def test_short_id_and_empty_password(self):
+        a = self.client()
+        self.assertEqual(a.auth('a', password='')[0], 2)
+        self.assertIsNotNone(World(self.db).accounts.authenticate('a', ''))
+        self.assertIsNone(World(self.db).accounts.authenticate('a', 'wrong'))
+        self.assertIsNone(World(self.db).accounts.authenticate('', '', True))
+        self.assertIsNone(World(self.db).accounts.authenticate('b', 'x'*11, True))
     def test_accounts_native_parsers_and_persistence(self):
         a=self.client();response=a.auth('TesterA');self.assertEqual(response[0],2)
         _,result,u=account_call(True,packet(0x94,response));self.assertEqual(result,0)

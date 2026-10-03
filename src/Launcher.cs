@@ -8,7 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.1.0")]
+[assembly: AssemblyVersion("1.3.2.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
@@ -25,7 +25,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) { status.Text="실패: "+e.Message; MessageBox.Show(e.Message,"작업 실패"); } }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.1"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.2"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -37,7 +37,7 @@ class Launcher : Form {
  Controls.Add(new Label {Text="화면 출력 크기를 확대합니다. 전장 시야 범위는 원본과 같습니다.\r\n가득 채우기 해제: 원본 화면비를 유지하며 좌우 여백을 표시합니다.",Left=28,Top=231,Width=584,Height=48});
  rally.Text="랠리·자동채집·입력창·F2/일꾼 선택 패치";rally.SetBounds(28,282,584,28);rally.Checked=true;Controls.Add(rally);
  if(File.Exists(settingsFile)){string[] values=File.ReadAllLines(settingsFile);bool value;if(values.Length>=4&&bool.TryParse(values[3],out value))rally.Checked=value;}
- Button("게임 실행",326,()=>{string game=Path.GetFullPath(path.Text); if(!File.Exists(game))throw new Exception("게임 파일을 찾을 수 없습니다."); if(Running(game))throw new Exception("게임이 이미 실행 중입니다."); string launch=rally.Checked?GamePatches.Build(game,Path.Combine(Path.GetDirectoryName(game),"3kd2-modern.exe")):game; InstallWindow(game); File.WriteAllText(Path.Combine(Root,"game-path.txt"),game); Process.Start(new ProcessStartInfo(launch){WorkingDirectory=Path.GetDirectoryName(game),UseShellExecute=true}); status.Text="게임 실행 요청 · "+(rally.Checked?"랠리 패치 사용":"원본 게임");});
+ Button("게임 실행",326,()=>{string game=Path.GetFullPath(path.Text); if(!File.Exists(game))throw new Exception("게임 파일을 찾을 수 없습니다."); if(Running(game))throw new Exception("게임이 이미 실행 중입니다."); string launch=rally.Checked?GamePatches.Build(game,Path.Combine(Path.GetDirectoryName(game),"3kd2-modern.exe")):game; if(rally.Checked)CompatPatch.Apply(launch,serverIp.Text.Trim()); InstallWindow(game); File.WriteAllText(Path.Combine(Root,"game-path.txt"),game); Process.Start(new ProcessStartInfo(launch){WorkingDirectory=Path.GetDirectoryName(game),UseShellExecute=true}); status.Text="게임 실행 요청 · "+(rally.Checked?"랠리 패치 사용":"원본 게임");});
  Button("해상도 / 화면모드 설정 적용",373,()=>{InstallWindow(Path.GetFullPath(path.Text));status.Text="설정 적용: "+resolution.Text+" · "+(window.Checked?"창모드":"전체화면")+". Alt+Enter로 전환 가능.";});
  Button("기존 그래픽 DLL / 설정 복원",420,()=>{string game=Path.GetFullPath(path.Text),dir=Path.GetDirectoryName(game),backup=Path.Combine(dir,"launcher-backup");if(Running(game))throw new Exception("게임을 종료한 뒤 복원하세요.");if(!File.Exists(Path.Combine(backup,"ddraw.dll")))throw new Exception("복원할 백업이 없습니다.");File.Copy(Path.Combine(backup,"ddraw.dll"),Path.Combine(dir,"ddraw.dll"),true);if(File.Exists(Path.Combine(backup,"ddraw.ini")))File.Copy(Path.Combine(backup,"ddraw.ini"),Path.Combine(dir,"ddraw.ini"),true);else if(File.Exists(Path.Combine(backup,"ini-was-absent")))File.Delete(Path.Combine(dir,"ddraw.ini"));window.Checked=false;rally.Checked=false;status.Text="기존 그래픽 설정 복원 완료. 원본 게임을 직접 실행하면 원복 상태로 실행됩니다.";});
  Button("런처 업데이트",467,ApplyUpdate);

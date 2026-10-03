@@ -56,7 +56,7 @@ class Accounts:
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute('CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE, salt BLOB NOT NULL, digest BLOB NOT NULL)')
     def authenticate(self, name, password, register=False):
-        if not 3 <= len(name.encode('cp949', 'replace')) <= 15 or not all(c.isalnum() or c in '_-' for c in name) or not 1 <= len(password.encode('cp949', 'replace')) <= 10:
+        if not 1 <= len(name.encode('cp949', 'replace')) <= 15 or len(password.encode('cp949', 'replace')) > 10:
             return None
         with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
             if register:

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -36,6 +36,11 @@ static class CompatPatch {
   // This changes only Internet initialization, never single-player or game data.
   b[0x60ad9]=0xe9;Put(b,0x60ada,0xb81400-0x460ade);
   Put(b,section+8,0x1600);Put(b,section+16,0x1600);Put(b,opt+4,BitConverter.ToInt32(b,opt+4)+0x200);
+  // Keep fixed packet capacities, remove the three-character signup minimum.
+  if(b[0xad148]!=3||b[0xae3d0]!=0x74||b[0xae41a]!=0x74)throw new InvalidDataException("회원가입 패치 대상 불일치");
+  b[0xad148]=1;
+  // Empty password is permitted; password confirmation and upper bounds remain.
+  b[0xae3d0]=0x90;b[0xae3d1]=0x90;b[0xae41a]=0x90;b[0xae41b]=0x90;
   File.WriteAllBytes(file,b);
  }
 }
