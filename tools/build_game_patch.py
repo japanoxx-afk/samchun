@@ -183,13 +183,16 @@ prompt.label('done');prompt.emit('c3')
 prompt_bytes=prompt.finish();assert len(prompt_bytes)<=0x100
 from build_hotkey_patch import build as build_hotkeys
 hotkeys=build_hotkeys(Code,BASE)
-payload=bytearray(0x1400);payload[:len(right_bytes)]=right_bytes;payload[0x100:0x100+len(target_bytes)]=target_bytes;payload[0x200:0x200+len(gather_bytes)]=gather_bytes;payload[0x400:0x400+len(produce_bytes)]=produce_bytes
+payload=bytearray(0x10000);payload[:len(right_bytes)]=right_bytes;payload[0x100:0x100+len(target_bytes)]=target_bytes;payload[0x200:0x200+len(gather_bytes)]=gather_bytes;payload[0x400:0x400+len(produce_bytes)]=produce_bytes
 payload[0x800:0x800+len(spawn_bytes)]=spawn_bytes
 payload[0x500:0x500+len(mana_bytes)]=mana_bytes
 payload[0x550:0x550+len(fallback_produce_bytes)]=fallback_produce_bytes
 payload[0x600:0x600+len(saved_bytes)]=saved_bytes;payload[0x700:0x700+len(recover_bytes)]=recover_bytes
 payload[0xc00:0xc00+len(prompt_bytes)]=prompt_bytes
 for offset,code in hotkeys.items():payload[offset:offset+len(code)]=code
+from build_selection_patch import build as build_selection
+selection,selection_edits=build_selection(Code,b,payload)
+Path('assets/selection.bin').write_bytes(selection)
 out=Path('dist/runtime/patches');out.mkdir(parents=True,exist_ok=True)
 (out/'rally.bin').write_bytes(payload)
 metadata={'source_sha256':hashlib.sha256(b).hexdigest(),'section_rva':rva,'base':BASE,'right_size':len(right_bytes),'target_size':len(target_bytes),'gather_size':len(gather_bytes),'hooks':[]}

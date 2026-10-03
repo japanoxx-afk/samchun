@@ -25,7 +25,7 @@ static class GamePatches {
  int rva=Align(end,sa),raw=Align(bytes.Length,fa),rawSize=Align(payload.Length,fa);
  if(rva!=0x780000||section+40>U32(bytes,optional+60))throw new InvalidDataException("PE 패치 섹션 구조 불일치");
  Array.Resize(ref bytes,raw+rawSize);Array.Copy(payload,0,bytes,raw,payload.Length);
- Array.Copy(System.Text.Encoding.ASCII.GetBytes(".rally"),0,bytes,section,6);Put(bytes,section+8,payload.Length);Put(bytes,section+12,rva);Put(bytes,section+16,rawSize);Put(bytes,section+20,raw);Put(bytes,section+36,0x60000020);
+ Array.Copy(System.Text.Encoding.ASCII.GetBytes(".rally"),0,bytes,section,6);Put(bytes,section+8,payload.Length);Put(bytes,section+12,rva);Put(bytes,section+16,rawSize);Put(bytes,section+20,raw);Put(bytes,section+36,unchecked((int)0xe0000020));
  Array.Copy(BitConverter.GetBytes((ushort)(count+1)),0,bytes,pe+6,2);Put(bytes,optional+4,U32(bytes,optional+4)+rawSize);Put(bytes,optional+56,Align(rva+payload.Length,sa));Put(bytes,optional+64,0);
  Hook(bytes,0x12c000,0xb80d00,new byte[]{0xe8,0x9b,0x77,0x04,0});
  Hook(bytes,0x117ac0,0xb80f00,new byte[]{0xa0,0xf8,0xd7,0x8c,0});bytes[0x117ac0]=0xe9;
@@ -41,6 +41,14 @@ static class GamePatches {
  Hook(bytes,0xf58bc,0xb80550,new byte[]{0xe8,0xdf,0x9c,0x05,0});
  Hook(bytes,0x118731,0xb80600,new byte[]{0xe8,0x4a,0x7c,0xfe,0xff});
  Hook(bytes,0x1664d0,0xb80700,new byte[]{0x56,0x8b,0xf1,0x8b,0x06});bytes[0x1664d0]=0xe9;
+ using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("selection.bin")) {
+ if(stream==null)throw new InvalidDataException("64 selection resource missing");
+ using(var reader=new BinaryReader(stream)) {
+ int total=reader.ReadInt32();for(int entry=0;entry<total;entry++) {
+ int offset=reader.ReadInt32(),length=reader.ReadInt32();byte[] expected=reader.ReadBytes(length),replacement=reader.ReadBytes(length);
+ for(int k=0;k<length;k++)if(bytes[offset+k]!=expected[k])throw new InvalidDataException("Selection patch mismatch: "+offset.ToString("X"));
+ Array.Copy(replacement,0,bytes,offset,length);
+ }}}
  string temp=output+".tmp";File.WriteAllBytes(temp,bytes);if(File.Exists(output))File.Delete(output);File.Move(temp,output);return output;
  }
 }

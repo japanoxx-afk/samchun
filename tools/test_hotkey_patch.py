@@ -5,11 +5,12 @@ import pefile
 from unicorn import Uc,UC_ARCH_X86,UC_MODE_32,UC_HOOK_CODE
 from unicorn.x86_const import *
 P=pefile.PE(r'C:\Users\seo\Downloads\DGGL\Games\3KD2120g_Win\3kd2.exe')
+from test_selection_patch import IMAGE
 PAYLOAD=Path('dist/runtime/patches/rally.bin').read_bytes()
 BASE=0xb80000;STACK=0x1108000;END=0x110f000;EVENT=0x1109000
 n=lambda x:struct.pack('<I',x)
 def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
- u=Uc(UC_ARCH_X86,UC_MODE_32);u.mem_map(0x400000,0x782000);u.mem_write(0x400000,P.get_memory_mapped_image());u.mem_write(BASE,PAYLOAD);u.mem_map(0x1000000,0x200000)
+ u=Uc(UC_ARCH_X86,UC_MODE_32);u.mem_map(0x400000,0x800000);u.mem_write(0x400000,IMAGE);u.mem_write(BASE,PAYLOAD);u.mem_map(0x1000000,0x200000)
  def put(a,v):u.mem_write(a,n(v))
  def get(a):return struct.unpack('<I',u.mem_read(a,4))[0]
  put(0x838ca8,focus);put(0x851854,modal);u.mem_write(0x8cd7f8,bytes([locked]));put(0x838c98,0x1100000);put(0x6c3edc,len(specs));put(0x71f864,0x8cc128)
@@ -38,7 +39,7 @@ def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
   sp=u.reg_read(UC_X86_REG_ESP);u.reg_write(UC_X86_REG_EAX,value);u.reg_write(UC_X86_REG_EIP,get(sp));u.reg_write(UC_X86_REG_ESP,sp+4+pop)
  def hook(uc,a,size,data):
   if a==0x5319e0:ret(int(get(u.reg_read(UC_X86_REG_ESP)+4)==0))
-  elif a==0x52c6f0:u.mem_write(0x8e1ad0,bytes(132));put(0x8dfbcc,0);calls.append('clear');ret()
+  elif a==0x52c6f0:u.mem_write(0xb84000,bytes(260));put(0x8dfbcc,0);calls.append('clear');ret()
   elif a in (0x40d270,0x40f2a0):calls.append(hex(a));ret()
   elif a==0x518990:
    sp=u.reg_read(UC_X86_REG_ESP);queued.append((get(sp+4),get(sp+8)));ret(pop=8)
@@ -57,7 +58,7 @@ def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
  assert u.reg_read(UC_X86_REG_EIP)==END
  assert u.reg_read(UC_X86_REG_ESP)==STACK+4
  for r,v in saved.items():assert u.reg_read(r)==v
- selected=[i for i,s in enumerate(specs) if s is not None and 0x1000000+i*0x1000 in struct.unpack('<32I',u.mem_read(0x8e1ad0,128))]
+ selected=[i for i,s in enumerate(specs) if s is not None and 0x1000000+i*0x1000 in struct.unpack('<64I',u.mem_read(0xb84000,256))]
  assert get(0x8dfbcc)==len(selected)
  return selected,calls,queued,registered
 army=[{},None,{'type':0x402},{'owner':1},{'dead':1},{'building':1},{'hidden':1},{'transport':1},{'transport':1,'exposed':1},{'category':0},{'type':0x450}]
@@ -68,8 +69,10 @@ for typ in (0x402,0x438,0x464):
  for cmd in (0,0x1770,0xbba):
   assert case([{'type':typ,'command':cmd}],1)[0]==[0]
   assert case([{'type':typ,'command':cmd,'queue':1}],1)[0]==[]
-assert len(case([{}]*40)[0])==32
-assert len(case([{'type':0x402}]*40,1)[0])==32
+assert len(case([{}]*40)[0])==40
+assert len(case([{'type':0x402}]*40,1)[0])==40
+assert len(case([{}]*70)[0])==64
+assert len(case([{'type':0x402}]*70,1)[0])==64
 assert case([],1)[1]==[]
 for kw in ({'focus':1},{'modal':1},{'locked':1}):
  assert case(army,**kw)[0]==[]
@@ -78,4 +81,4 @@ assert case([],entry=0xe00)[2]==[(0x100,0)]
 assert case([],entry=0xe80)[2]==[(0x100,1)]
 assert case(workers,mode=1,entry=0xf00)[0]==[0,1,2]
 assert case([],entry=0xd00)[3]==[(0,0xcf,0x52b4b0),(0,0x34,BASE+0xe80)]
-print('36 hotkey scenarios passed: mixed ownership, workers/tasks/queues, map-wide military, capacity, input guards, enqueue/dispatch and registration stack')
+print('38 hotkey scenarios passed: mixed ownership, workers/tasks/queues, map-wide military, capacity, input guards, enqueue/dispatch and registration stack')

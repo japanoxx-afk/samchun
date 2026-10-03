@@ -52,8 +52,8 @@ def build(Code, BASE):
  c.label('select');c.emit('85 ff');c.j('0f 85','add')
  c.call(0x52c6f0);c.emit('bf 01 00 00 00 c6 05 c8 1a 8e 00 00')
  c.label('add');method(0x170)
- # Respect native buffer capacity. Expanding this requires a separate command/save patch.
- c.emit('83 3d cc fb 8d 00 20');c.j('0f 8d','finish')
+ # Selection and command buffers are relocated by the accompanying 64-unit patch.
+ c.emit('83 3d cc fb 8d 00 40');c.j('0f 8d','finish')
  c.label('next');c.emit('45');c.j('e9','loop')
  c.label('finish');c.emit('85 ff');c.j('0f 84','restore')
  c.call(0x40d270);c.emit('6a 00 6a 01');c.call(0x40f2a0);c.emit('83 c4 08')

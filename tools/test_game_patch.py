@@ -12,7 +12,7 @@ def n(v):return struct.pack('<I',v&0xffffffff)
 class Case:
  def __init__(self,unit_id=0x402,target_id=0x614,amount=500,owner=0,target_owner=9):
   self.u=Uc(UC_ARCH_X86,UC_MODE_32);u=self.u
-  data=p.get_memory_mapped_image();u.mem_map(0x400000,0x782000);u.mem_write(0x400000,data);u.mem_write(BASE,payload)
+  data=p.get_memory_mapped_image();u.mem_map(0x400000,0x800000);u.mem_write(0x400000,data);u.mem_write(BASE,payload)
   u.mem_map(UNIT,0x80000);self.next=STUB
   u.mem_write(TABLE,p.get_data(0x29af80,0x780));u.mem_write(TTABLE,p.get_data(0x29af80,0x780))
   self.put(UNIT,TABLE);self.put(UNIT+4,unit_id);self.put(UNIT+0x26c,1)
