@@ -226,7 +226,7 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             self.request.settimeout(None)
             put32(self.record, 0, self.uid)
             puttext(self.record, 4, 16, self.name)
-            self.send(0x94, b'\x02'+self.record)
+            self.send(0x94, b'\x02'+self.record+b'\x07')  # trailing faction mask: three pairs
     def dispatch(self, op, b):
         if op == 0x13:  # Start/stop asynchronous native receive workers.
             return
@@ -331,7 +331,8 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             elif room:
                 room['members'].discard(self.uid)
             self.room = 0
-            self.send(0x7e, b'\x01'+bytes(349))
+            # Native 42cf80 never consumes a leave response. Sending 0x7e here
+            # poisons the next create/join response queue with an empty session.
         elif op == 0x12 and len(b) == 150:
             # Session status is opaque until native transport validation completes.
             return

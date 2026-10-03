@@ -19,7 +19,7 @@ def account_call(register=False,response=None):
         esp=u.reg_read(UC_X86_REG_ESP);addr=struct.unpack('<I',u.mem_read(esp,4))[0]
         u.reg_write(UC_X86_REG_ESP,esp+4);u.reg_write(UC_X86_REG_EAX,value);u.reg_write(UC_X86_REG_EIP,addr)
     def hook(uc,a,size,user):
-        if a in [0x42c100,0x573290,0x43bbe0]:ret()
+        if a in [0x42c100,0x573290]:ret()
         elif a==0x42c050:
             esp=u.reg_read(UC_X86_REG_ESP);ptr,n=struct.unpack('<II',u.mem_read(esp+4,8));captured.append(bytes(u.mem_read(ptr,n)))
             if response is None:u.emu_stop()
@@ -37,6 +37,11 @@ if __name__=='__main__':
         assert req[7:23].split(b'\0')[0]==b'TesterA'
         assert req[23:34].split(b'\0')[0]==b'Test123'
         rec=bytearray(485);struct.pack_into('<I',rec,0,123)
-        _,result,u=account_call(register,packet(0x94,b'\x02'+rec))
+        _,result,u=account_call(register,packet(0x94,b'\x02'+rec+b'\x07'))
         assert result==0 and struct.unpack('<I',u.mem_read(0x837ca8,4))[0]==123
+        assert u.mem_read(0x837f4c,1)==b'\x07'
+        u.mem_write(0xb00000,struct.pack('<I',0xb70000));u.reg_write(UC_X86_REG_ESP,0xb00000)
+        u.emu_start(0x466200,0xb70000,count=1000)
+        assert struct.unpack('<I',u.mem_read(0x6c767c,4))[0]==7
+        assert struct.unpack('<7I',u.mem_read(0x6c7660,28))==tuple(range(7))
         print(('register' if register else 'login')+': native request and success parser passed')

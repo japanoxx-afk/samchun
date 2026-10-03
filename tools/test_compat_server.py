@@ -43,7 +43,8 @@ class CompatibilityTest(unittest.TestCase):
         self.assertIsNone(World(self.db).accounts.authenticate('', '', True))
         self.assertIsNone(World(self.db).accounts.authenticate('b', 'x'*11, True))
     def test_accounts_native_parsers_and_persistence(self):
-        a=self.client();response=a.auth('TesterA');self.assertEqual(response[0],2)
+        a=self.client();response=a.auth('TesterA')
+        self.assertEqual(len(response),487);self.assertEqual(response[486],7);self.assertEqual(response[0],2)
         _,result,u=account_call(True,packet(0x94,response));self.assertEqual(result,0)
         self.assertEqual(self.client().auth('TesterA')[0],1)
         self.assertEqual(self.client().auth('TesterA',False,'wrong')[0],0)
@@ -71,7 +72,7 @@ class CompatibilityTest(unittest.TestCase):
             self.assertEqual(u32(received,16),a.uid);self.assertEqual(received[28:],b'test')
         finally:
             for p in peers:p.close()
-        a.send(0x11,struct.pack('<I',rid));self.assertEqual(a.receive(0x7e)[0],1)
+        a.send(0x11,struct.pack('<I',rid));a.send(2,b'\x03'+b'TesterA'.ljust(16,b'\0'));a.receive(0x7a)
         self.assertNotIn(rid,self.world.rooms)
         # The real client leaves the room before sending opcode 01.
         win = result_packet(1,'TesterA')[7:]
@@ -93,6 +94,21 @@ class CompatibilityTest(unittest.TestCase):
         # Native result 4 is a non-counting match, not a request to reset history.
         self.assertTrue(reopened.accounts.record_result('no-contest',a.uid,4))
         self.assertEqual(parse_statistics(reopened.accounts.statistics('TesterA')),(1,1,0,2))
+    def test_repeated_room_creation_without_login(self):
+        a=self.client();self.assertEqual(a.auth('RepeatA')[0],2)
+        for _ in range(4):
+            record=bytearray(207);puttext(record,4,32,'Repeated room')
+            a.send(0xe,record);created=a.receive(0x7e)
+            self.assertEqual(len(created),360)
+            rid=u32(created,15);self.assertGreaterEqual(rid,100)
+            self.assertEqual(u32(created,222),a.uid)
+            relay=socket.create_connection(self.relay.server_address);relay.settimeout(3)
+            relay.sendall(struct.pack('<IIIII',1,0x130,36,rid,a.uid)+b'RepeatA'.ljust(16,b'\0'))
+            self.assertEqual(struct.unpack('<IIIII',read_exact(relay,20))[-1],0xbe0e33ce)
+            relay.close()
+            a.send(0x11,struct.pack('<I',rid))
+            # No receive(0x7e): native leave is fire-and-forget. The next
+            # iteration must not consume a stale leave acknowledgement.
     def test_unauthenticated_and_invalid_frames(self):
         a=self.client();a.send(0xe,bytes(207));self.assertEqual(a.receive(0x93),bytes(4));self.assertFalse(self.world.rooms)
         a.s.sendall(struct.pack('<IBH',0xffffffff,0xc,65535));self.assertEqual(a.s.recv(1),b'')
