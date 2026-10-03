@@ -29,7 +29,7 @@ def build(Code, original, payload):
     elif 0x8dfbd0<=value<0x8dffd0:new=C+value-0x8dfbd0
     elif kind==2 and i.mnemonic=='cmp' and 0x8dffd0<=value<=0x8dffef:new=C+0x800+value-0x8dffd0
     elif value in (0x8e0388,0x8e03a6):new=D+value-0x8e0388
-    elif value in (0x8df568,0x8df56c):new=G+value-0x8df568
+    elif 0x8df568<=value<0x8dfb40 and (value-0x8df568)%0x88 in (0,4):new=G+((value-0x8df568)//0x88)*0x108+(value-0x8df568)%0x88
     elif kind==2 and i.mnemonic=='cmp' and value in (0x8dfb40,0x8dfbc8):new=G+(11 if value==0x8dfb40 else 12)*0x108
     if new is not None:
      off=i.imm_offset if kind==2 else i.disp_offset
@@ -93,6 +93,8 @@ def build(Code, original, payload):
  c.label('discard');c.emit('8d be 84 00 00 00 b9 21 00 00 00 f3 ab 81 c6 08 01 00 00 43 83 fb 0c');c.j('0f 8c','discard')
  c.label('done');c.emit('89 f8 83 c4 64 5f 5e 5d 5b c3');block(0x2600,c)
  edit(0x5282b0,b'\xe9'+struct.pack('<i',0xb82600-0x5282b5)+b'\x90')
+ from build_production_patch import build as build_production
+ edits.update(build_production(Code,original,payload))
  out=bytearray(struct.pack('<I',len(edits)))
  for o,(old,new) in sorted(edits.items()):out+=struct.pack('<II',o,len(old))+old+new
  return bytes(out),edits
