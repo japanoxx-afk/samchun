@@ -1,0 +1,13 @@
+/dist/
+/releases/
+/verification/
+/update-test/
+__pycache__/
+*.pyc
+*.exe
+*.dll
+*.bak
+tools/*-analysis.txt
+game-path.txt
+display-settings.txt
+network-settings.txt
