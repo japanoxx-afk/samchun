@@ -8,7 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.12.0")]
+[assembly: AssemblyVersion("1.3.13.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
@@ -18,6 +18,8 @@ class Launcher : Form {
  static readonly string[] Resolutions = {"1280 × 720 (16:9)", "1600 × 900 (16:9)", "1920 × 1080 (16:9)", "2560 × 1440 (16:9)", "3840 × 2160 (16:9)", "1280 × 960 (4:3)"};
  static readonly int[] Widths = {1280,1600,1920,2560,3840,1280}, Heights = {720,900,1080,1440,2160,960};
  [DllImport("kernel32", CharSet=CharSet.Unicode)] static extern bool WritePrivateProfileString(string section,string key,string value,string file);
+ [DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr process,int flags,System.Text.StringBuilder path,ref int size);
+ static string ProcessImagePath(Process process) {var buffer=new System.Text.StringBuilder(32768);int size=buffer.Capacity;if(!QueryFullProcessImageName(process.Handle,0,buffer,ref size))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());return buffer.ToString();}
  static string Hash(string file) { using(var s=File.OpenRead(file)) using(var h=SHA256.Create()) return BitConverter.ToString(h.ComputeHash(s)).Replace("-",""); }
  static string Quote(string s) { return "\""+s+"\""; }
  static bool Running(string game) { foreach(string name in new[]{Path.GetFileNameWithoutExtension(game),"3kd2-modern"})foreach(var p in Process.GetProcessesByName(name)) { try { if(string.Equals(Path.GetDirectoryName(p.MainModule.FileName),Path.GetDirectoryName(game),StringComparison.OrdinalIgnoreCase)) return true; } catch { return true; } } return false; }
@@ -25,7 +27,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) { status.Text="실패: "+e.Message; MessageBox.Show(e.Message,"작업 실패"); } }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.12"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.13"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -64,10 +66,25 @@ class Launcher : Form {
  return dialog;
  }
  void StartCompatServer() {
- foreach(var process in Process.GetProcessesByName("samchun-server")) {process.Dispose();status.Text="서버가 이미 실행 중입니다. 업데이트 후에는 기존 서버를 종료해야 새 서버가 적용됩니다.";return;}
- string exe=InstallServer();
- Process.Start(new ProcessStartInfo(exe){WorkingDirectory=Path.GetDirectoryName(exe),UseShellExecute=true});
- status.Text="인터넷 서버 실행 요청. 서버 창을 유지하고 입력한 서버로 게임 접속을 누르세요.";
+ string exe=InstallServer(),expected=Hash(exe);var processes=Process.GetProcessesByName("samchun-server");
+ try {
+ bool outdated=false;
+ foreach(var process in processes) {
+ string running;
+ try {running=ProcessImagePath(process);}catch {throw new Exception("실행 중인 서버 버전을 확인할 수 없습니다. 기존 서버를 종료한 뒤 다시 구동하세요.");}
+ if(!File.Exists(running)||Hash(running)!=expected)outdated=true;
+ }
+ if(processes.Length>0&&!outdated){status.Text="최신 인터넷 서버가 실행 중입니다. 계정 전적 저장을 지원합니다.";return;}
+ if(outdated) {
+ foreach(var connection in System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpConnections())
+ if((connection.LocalEndPoint.Port==4800||connection.LocalEndPoint.Port==4901)&&connection.State==System.Net.NetworkInformation.TcpState.Established)
+ throw new Exception("구형 서버에 접속자가 있습니다. 모두 게임에서 로그아웃한 뒤 서버 구동을 다시 누르세요. 기존 계정은 유지됩니다.");
+ foreach(var process in processes) {try {if(!process.HasExited)process.Kill();}catch(InvalidOperationException){}}
+ foreach(var process in processes) {try {if(!process.WaitForExit(5000))throw new Exception("구형 서버 종료 대기시간 초과");}catch(InvalidOperationException){}}
+ }
+ Process.Start(new ProcessStartInfo(exe){WorkingDirectory=Path.GetDirectoryName(exe),UseShellExecute=true,WindowStyle=ProcessWindowStyle.Hidden});
+ status.Text=outdated?"구형 서버를 최신 서버로 전환했습니다. 기존 계정 유지 · 계정 전적 저장 지원.":"인터넷 서버 실행 요청 · 계정 전적 저장 지원. 입력한 서버로 게임 접속을 누르세요.";
+ }finally {foreach(var process in processes)process.Dispose();}
  }
  void LaunchCompat() {
  string game=Path.GetFullPath(path.Text),ip=serverIp.Text.Trim();
