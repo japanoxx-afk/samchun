@@ -22,6 +22,7 @@ class Case:
   self.method(TTABLE,0x250,native=self.ret(0));self.method(TTABLE,0x324,native=self.ret(amount));self.method(TTABLE,0x328,native=self.ret(amount));self.method(TTABLE,0x350,native=self.ret(1))
   # Native IsBuilding uses the real type getter and original code.
   self.method(TABLE,0x128,native=0x503c10)
+  self.method(TABLE,0x234,native=self.ret(0))
   self.method(TABLE,0x38,code=bytes.fromhex('b8 01 00 00 00 c2 04 00'))
   self.method(TABLE,0x1e8,native=0x542ec0)
   # Fallback combat/repair decision is outside this resource-only patch's scope.

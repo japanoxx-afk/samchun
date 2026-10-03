@@ -80,6 +80,7 @@ produce=Code(BASE+0x400)
 for _ in range(6):produce.emit('ff 74 24 18') # copy cdecl arguments, right to left
 produce.call(0x54fef0);produce.emit('83 c4 18 9c 60 89 c6 85 c0')
 produce.j('0f 84','done')
+produce.call(BASE+0x500)
 produce.emit('83 ec 20 31 c0')
 for o in range(0,32,4):produce.emit('89 44 24 '+format(o,'02x'))
 produce.emit('8b 4f 49 8b 01 8d 54 24 1a 52 ff 90 70 03 00 00 85 c0')
@@ -90,6 +91,26 @@ produce.emit('8b 06 89 f1 57');produce.call(BASE+0x200)
 produce.label('free');produce.emit('83 c4 20')
 produce.label('done');produce.emit('61 9d c3')
 produce_bytes=produce.finish()
+assert len(produce_bytes)<=0x100
+# MP is the signed word at +a3 (native getter 503c60 / vtable +224).
+# Spell execution 56490f reads the spell Mana cost (+78), compares +224,
+# and 564a72 deducts it through +22c. HP is the separate word at +a1.
+# Query the final owner/upgraded maximum through +234 after factory completion.
+mana=Code(BASE+0x500)
+mana.emit('9c 60 85 f6');mana.j('0f 84','done')
+mana.emit('8b 06 81 b8 24 02 00 00');mana.n(0x503c60)
+mana.j('0f 85','done')
+mana.emit('89 f1 ff 90 34 02 00 00 85 c0');mana.j('0f 8e','done')
+mana.emit('6b c0 41 31 d2 b9 64 00 00 00 f7 f1 66 89 86 a3 00 00 00')
+mana.label('done');mana.emit('61 9d c3')
+mana_bytes=mana.finish();assert len(mana_bytes)<=0x50
+# The producer's no-exit-placement fallback uses the five-argument factory.
+fallback_produce=Code(BASE+0x550)
+for _ in range(5):fallback_produce.emit('ff 74 24 14')
+fallback_produce.call(0x54f5a0)
+fallback_produce.emit('83 c4 14 9c 60 89 c6');fallback_produce.call(BASE+0x500)
+fallback_produce.emit('61 9d c3')
+fallback_produce_bytes=fallback_produce.finish();assert len(fallback_produce_bytes)<=0xb0
 # The original loader serializes the input queue including a process-local
 # CRITICAL_SECTION. Read into scratch space, then copy only serializable bytes
 # under the CURRENT lock. Never expose the stale saved lock to the input thread.
@@ -164,6 +185,8 @@ from build_hotkey_patch import build as build_hotkeys
 hotkeys=build_hotkeys(Code,BASE)
 payload=bytearray(0x1400);payload[:len(right_bytes)]=right_bytes;payload[0x100:0x100+len(target_bytes)]=target_bytes;payload[0x200:0x200+len(gather_bytes)]=gather_bytes;payload[0x400:0x400+len(produce_bytes)]=produce_bytes
 payload[0x800:0x800+len(spawn_bytes)]=spawn_bytes
+payload[0x500:0x500+len(mana_bytes)]=mana_bytes
+payload[0x550:0x550+len(fallback_produce_bytes)]=fallback_produce_bytes
 payload[0x600:0x600+len(saved_bytes)]=saved_bytes;payload[0x700:0x700+len(recover_bytes)]=recover_bytes
 payload[0xc00:0xc00+len(prompt_bytes)]=prompt_bytes
 for offset,code in hotkeys.items():payload[offset:offset+len(code)]=code
@@ -173,7 +196,7 @@ metadata={'source_sha256':hashlib.sha256(b).hexdigest(),'section_rva':rva,'base'
 for offset,target,expected in [(0x130bb0,BASE,bytes.fromhex('ff 90 e8 01 00 00')),(0x12f3f0,BASE,bytes.fromhex('ff 90 e8 01 00 00')),(0x12f1f5,BASE+0x100,bytes.fromhex('ff 92 ec 01 00 00'))]+[(o,BASE+0x400,b'\xe8'+struct.pack('<i',0x54fef0-(0x400000+o+5))) for o in [0xf5843,0xf5887]]:
  assert b[offset:offset+len(expected)]==expected
  metadata['hooks'].append({'offset':offset,'target':target,'expected':expected.hex()})
-for offset,target,expected,kind in [(0x12c000,BASE+0xd00,'e89b770400','call'),(0x117ac0,BASE+0xf00,'a0f8d78c00','jump'),(0x659ba,BASE+0xc00,'e84111feff','call'),(0xf5793,BASE+0x800,'e8889ff5ff','call'),(0x118731,BASE+0x600,'e84a7cfeff','call'),(0x1664d0,BASE+0x700,'568bf18b06','jump')]:
+for offset,target,expected,kind in [(0xf58bc,BASE+0x550,'e8df9c0500','call'),(0x12c000,BASE+0xd00,'e89b770400','call'),(0x117ac0,BASE+0xf00,'a0f8d78c00','jump'),(0x659ba,BASE+0xc00,'e84111feff','call'),(0xf5793,BASE+0x800,'e8889ff5ff','call'),(0x118731,BASE+0x600,'e84a7cfeff','call'),(0x1664d0,BASE+0x700,'568bf18b06','jump')]:
  assert b[offset:offset+5].hex()==expected
  metadata['hooks'].append({'offset':offset,'target':target,'expected':expected,'kind':kind})
 (out/'rally.bin').write_bytes(payload)
