@@ -32,17 +32,6 @@ static class CompatPatch {
    w.Write(new byte[]{0x83,0xc4,8,0xe9});w.Write(0x460e82-(0xb81460+(int)m.Position+4));
    Array.Copy(m.ToArray(),0,b,raw+0x1460,m.Length);
   }
-  // Native game relay: disable Nagle only for a successful SOCK_STREAM socket.
-  if(BitConverter.ToUInt32(b,0xf923c)!=0xfd83e88b||b[0xf9240]!=0xff)throw new InvalidDataException("중계 소켓 패치 대상 불일치");
-  using(var m=new MemoryStream())using(var w=new BinaryWriter(m)){
-   w.Write(new byte[]{0x9c,0x60,0x83,0xf8,0xff,0x74,0x21});
-   // pushfd + pushad moved the original socket-type argument by 36 bytes.
-   w.Write(new byte[]{0x83,0xbc,0x24});w.Write(0x28bc);w.Write((byte)1);
-   w.Write(new byte[]{0x75,0x17,0x89,0xc6,0x6a,1,0x89,0xe1,0x6a,4,0x51,0x6a,1,0x6a,6,0x56,0xff,0x15});w.Write(0x682328);
-   w.Write(new byte[]{0x83,0xc4,4,0x61,0x9d,0x8b,0xe8,0x83,0xfd,0xff,0xe9});w.Write(0x4f9241-(0xb81520+(int)m.Position+4));
-   Array.Copy(m.ToArray(),0,b,raw+0x1520,m.Length);
-  }
-  b[0xf923c]=0xe9;Put(b,0xf923d,0xb81520-0x4f9241);
   // The discontinued update/serial service is not needed by the private lobby.
   // This changes only Internet initialization, never single-player or game data.
   b[0x60ad9]=0xe9;Put(b,0x60ada,0xb81400-0x460ade);
@@ -50,6 +39,9 @@ static class CompatPatch {
   // Keep fixed packet capacities, remove the three-character signup minimum.
   if(b[0xad148]!=3||b[0xae3d0]!=0x74||b[0xae41a]!=0x74)throw new InvalidDataException("회원가입 패치 대상 불일치");
   b[0xad148]=1;
+  // Result sender separately rejects account names shorter than three bytes.
+  if(b[0xf7b6a]!=3)throw new InvalidDataException("전적 전송 패치 대상 불일치");
+  b[0xf7b6a]=1;
   // Empty password is permitted; password confirmation and upper bounds remain.
   b[0xae3d0]=0x90;b[0xae3d1]=0x90;b[0xae41a]=0x90;b[0xae41b]=0x90;
   File.WriteAllBytes(file,b);

@@ -54,6 +54,7 @@ class Accounts:
     def __init__(self, path):
         self.path = str(path)
         with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute('CREATE TABLE IF NOT EXISTS match_results (match_id TEXT NOT NULL, user_id INTEGER NOT NULL, outcome INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY(match_id,user_id))')
             db.execute('CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE, salt BLOB NOT NULL, digest BLOB NOT NULL)')
     def authenticate(self, name, password, register=False):
         if not 1 <= len(name.encode('cp949', 'replace')) <= 15 or len(password.encode('cp949', 'replace')) > 10:
@@ -73,6 +74,24 @@ class Accounts:
             if row and hmac.compare_digest(row[3], digest):
                 return row[0], row[1]
             return None
+
+    def record_result(self, match_id, uid, outcome):
+        if not match_id or outcome not in (1, 2, 3, 4):
+            return False
+        with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
+            row = db.execute('INSERT OR IGNORE INTO match_results VALUES (?,?,?,?)',
+                             (match_id, uid, outcome, int(time.time())))
+            return row.rowcount == 1
+    def statistics(self, name):
+        with closing(sqlite3.connect(self.path, timeout=10)) as db:
+            rows = db.execute('SELECT outcome,COUNT(*) FROM match_results WHERE user_id=(SELECT id FROM accounts WHERE name=?) GROUP BY outcome', (name,)).fetchall()
+        counts = dict(rows)
+        result = bytearray(80)
+        # Original 4f7c40 reads these unsigned 16-bit counters from 0x7a.
+        values = [counts.get(1,0), counts.get(2,0), counts.get(3,0)]
+        for offset, value in zip((57,59,61,63), values+[sum(values)]):
+            struct.pack_into('<H', result, offset, min(value, 65535))
+        return result
 
 class World:
     def __init__(self, database):
@@ -142,8 +161,9 @@ class LobbyHandler(socketserver.BaseRequestHandler):
         self.name = ''
         self.channel = 1
         self.room = 0
+        self.match_id = None
+        self.match_relay = False
         self.send_lock = threading.Lock()
-        self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.request.settimeout(30)
         self.request.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         self.record = bytearray(485)
@@ -217,8 +237,15 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             return
         if op == 0x0d:  # lobby entered after authentication
             self.world.users(self)
-        elif op == 2:  # player statistics queried by the lobby constructor
-            self.send(0x7a, bytes(80))
+        elif op == 1 and len(b) == 683:
+            # A result often arrives AFTER room-leave; retain the match ticket.
+            if self.match_relay and text(b,1,16).casefold() == self.name.casefold():
+                stored = self.world.accounts.record_result(self.match_id, self.uid, b[0])
+                LOG.info('match result user=%d outcome=%d stored=%s', self.uid, b[0], stored)
+            # Native result sender is fire-and-forget; do not enqueue a reply.
+        elif op == 2 and len(b) == 17:
+            name = text(b,1,16) or self.name
+            self.send(0x7a, self.world.accounts.statistics(name))
         elif op == 0x10:
             self.world.room_list(self)
         elif op == 0x21:
@@ -284,7 +311,7 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             put32(record, 0xb7, 0)
             put32(record, 195, rid)
             put32(record, 203, self.uid)
-            self.world.rooms[rid] = dict(record=record, owner=self, members={self.uid})
+            self.world.rooms[rid] = dict(record=record, owner=self, members={self.uid}, match_id=secrets.token_hex(16))
             self.room = rid
             self.send_room(rid)
             self.world.broadcast(0x7f, struct.pack('<I', 1)+b'\x01'+record)
@@ -313,6 +340,8 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             self.send(0x93, bytes(4))
     def send_room(self, rid):
         room = self.world.rooms[rid]
+        self.match_id = room['match_id']
+        self.match_relay = False
         # 0x7e payload: status, 14-byte native session address, 207-byte room,
         # then transport initialization fields and 130 bytes of session metadata.
         body = bytearray(360)
@@ -328,7 +357,6 @@ class RelayHandler(socketserver.BaseRequestHandler):
         world = self.server.world
         self.lock = threading.Lock()
         self.uid = self.rid = 0
-        self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.request.settimeout(60)
         try:
             raw = read_exact(self.request, 12)
@@ -344,6 +372,7 @@ class RelayHandler(socketserver.BaseRequestHandler):
                     return
                 if (rid, uid) in world.relays:
                     return
+                owner.match_relay = True
                 self.uid, self.rid = uid, rid
                 world.relays[rid, uid] = self
             self.send(struct.pack('<IIIII', 1, 0x1f6, 20, 0x130, 0xbe0e33ce))

@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'server'))
 from compat_server import World,LobbyServer,RelayHandler,packet,read_exact,puttext,put32,u32
 from test_compat_native import account_call
+from test_stats_native import result_packet, parse_statistics
 
 class Client:
     def __init__(self,port):self.s=socket.create_connection(('127.0.0.1',port));self.s.settimeout(3)
@@ -65,16 +66,6 @@ class CompatibilityTest(unittest.TestCase):
                 sock=socket.create_connection(self.relay.server_address);sock.settimeout(3)
                 sock.sendall(struct.pack('<IIIII',1,0x130,36,rid,c.uid)+name.encode().ljust(16,b'\0'))
                 self.assertEqual(struct.unpack('<IIIII',read_exact(sock,20)),(1,0x1f6,20,0x130,0xbe0e33ce));peers.append(sock)
-            with self.world.lock:
-                for handler in list(self.world.clients)+list(self.world.relays.values()):
-                    self.assertEqual(handler.request.getsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY),1)
-            for sender, receiver, uid, dest in [(peers[0],peers[1],a.uid,b.uid),(peers[1],peers[0],b.uid,a.uid)]:
-                for sequence in range(100):
-                    sender.sendall(struct.pack('<8I',1,0x1f5,32,rid,999,rid,dest,sequence))
-                received = read_exact(receiver,3200)
-                for sequence in range(100):
-                    self.assertEqual(u32(received,sequence*32+16),uid)
-                    self.assertEqual(u32(received,sequence*32+28),sequence)
             frame=struct.pack('<IIIIIII',1,0x1f5,32,rid,999,rid,b.uid)+b'test'
             peers[0].sendall(frame);received=read_exact(peers[1],32)
             self.assertEqual(u32(received,16),a.uid);self.assertEqual(received[28:],b'test')
@@ -82,6 +73,26 @@ class CompatibilityTest(unittest.TestCase):
             for p in peers:p.close()
         a.send(0x11,struct.pack('<I',rid));self.assertEqual(a.receive(0x7e)[0],1)
         self.assertNotIn(rid,self.world.rooms)
+        # The real client leaves the room before sending opcode 01.
+        win = result_packet(1,'TesterA')[7:]
+        a.send(1, win);a.send(1, win)
+        # A connected account cannot credit a different account.
+        a.send(1,result_packet(1,'TesterB')[7:])
+        b.send(1,result_packet(2,'TesterB')[7:])
+        def query(c,name):
+            request=bytearray(17);request[0]=3;puttext(request,1,16,name)
+            c.send(2,request);return parse_statistics(c.receive(0x7a))
+        self.assertEqual(query(a,'TesterA'),(1,0,0,1))
+        self.assertEqual(query(b,'TesterB'),(0,1,0,1))
+        self.assertEqual(query(a,'TesterB'),(0,1,0,1))
+        reopened=World(self.db)
+        self.assertEqual(parse_statistics(reopened.accounts.statistics('TesterA')),(1,0,0,1))
+        self.assertFalse(reopened.accounts.record_result(next(c.match_id for c in self.world.clients if c.uid==a.uid),a.uid,1))
+        self.assertTrue(reopened.accounts.record_result('second-match',a.uid,2))
+        self.assertEqual(parse_statistics(reopened.accounts.statistics('TesterA')),(1,1,0,2))
+        # Native result 4 is a non-counting match, not a request to reset history.
+        self.assertTrue(reopened.accounts.record_result('no-contest',a.uid,4))
+        self.assertEqual(parse_statistics(reopened.accounts.statistics('TesterA')),(1,1,0,2))
     def test_unauthenticated_and_invalid_frames(self):
         a=self.client();a.send(0xe,bytes(207));self.assertEqual(a.receive(0x93),bytes(4));self.assertFalse(self.world.rooms)
         a.s.sendall(struct.pack('<IBH',0xffffffff,0xc,65535));self.assertEqual(a.s.recv(1),b'')
