@@ -65,6 +65,16 @@ class CompatibilityTest(unittest.TestCase):
                 sock=socket.create_connection(self.relay.server_address);sock.settimeout(3)
                 sock.sendall(struct.pack('<IIIII',1,0x130,36,rid,c.uid)+name.encode().ljust(16,b'\0'))
                 self.assertEqual(struct.unpack('<IIIII',read_exact(sock,20)),(1,0x1f6,20,0x130,0xbe0e33ce));peers.append(sock)
+            with self.world.lock:
+                for handler in list(self.world.clients)+list(self.world.relays.values()):
+                    self.assertEqual(handler.request.getsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY),1)
+            for sender, receiver, uid, dest in [(peers[0],peers[1],a.uid,b.uid),(peers[1],peers[0],b.uid,a.uid)]:
+                for sequence in range(100):
+                    sender.sendall(struct.pack('<8I',1,0x1f5,32,rid,999,rid,dest,sequence))
+                received = read_exact(receiver,3200)
+                for sequence in range(100):
+                    self.assertEqual(u32(received,sequence*32+16),uid)
+                    self.assertEqual(u32(received,sequence*32+28),sequence)
             frame=struct.pack('<IIIIIII',1,0x1f5,32,rid,999,rid,b.uid)+b'test'
             peers[0].sendall(frame);received=read_exact(peers[1],32)
             self.assertEqual(u32(received,16),a.uid);self.assertEqual(received[28:],b'test')

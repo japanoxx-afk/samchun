@@ -143,6 +143,7 @@ class LobbyHandler(socketserver.BaseRequestHandler):
         self.channel = 1
         self.room = 0
         self.send_lock = threading.Lock()
+        self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.request.settimeout(30)
         self.request.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         self.record = bytearray(485)
@@ -327,6 +328,7 @@ class RelayHandler(socketserver.BaseRequestHandler):
         world = self.server.world
         self.lock = threading.Lock()
         self.uid = self.rid = 0
+        self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.request.settimeout(60)
         try:
             raw = read_exact(self.request, 12)
