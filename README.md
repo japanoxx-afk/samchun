@@ -1,10 +1,10 @@
-# samchun
+﻿# samchun
 
 삼국지 천명 2 (3KD2 1.20g) Windows 런처·패치 및 인게임 Internet 호환 서버.
 게임 원본과 게임 데이터는 포함하지 않습니다.
 지원 원본 SHA256: `A0EE96931B3B74FCE739062D8E58253892510EF863E9127648AC38FD4D515F99`.
 
-## 1.3.0 호환 서버 시험판
+## 1.3.1 인터넷 서버
 
 게임의 원래 INTERNET → 회원가입/로그인 → 공용 대기실 → 방 생성 화면을 사용합니다.
 런처에서 로그인하지 않습니다. 기존 직접 IP 우회 방식과 다른 서버입니다.
@@ -20,10 +20,10 @@
 Windows 10/11 64비트에서 ZIP 전체를 새 폴더에 풉니다. Python 설치는 필요 없습니다.
 양쪽에 같은 버전의 게임 원본과 맵이 있어야 합니다.
 
-1. A: launcher.exe에서 원본 3kd2.exe 경로 지정 → **A: 호환 서버 켜기**.
-2. A: 서버 주소 `127.0.0.1` → **INTERNET 게임 실행** → 게임에서 **INTERNET**.
+1. A: launcher.exe에서 원본 3kd2.exe 경로 지정 → **인터넷 서버 구동**.
+2. A: 서버 주소 `127.0.0.1` → **입력한 서버로 게임 접속** → 게임에서 **INTERNET**.
 3. A: 게임에서 회원가입/로그인 → 대기실에서 방 생성.
-4. B: 서버 주소에 A의 IPv4 입력 → **INTERNET 게임 실행** → 게임에서 **INTERNET**.
+4. B: 서버 주소에 A의 IPv4 입력 → **입력한 서버로 게임 접속** → 게임에서 **INTERNET**.
 5. B: 자기 계정으로 회원가입/로그인 → 방 목록에서 A의 방 선택 → 참가.
 
 B에서는 호환 서버를 별도로 켜지 않습니다. A의 서버 창을 닫으면 접속이 끊깁니다.
@@ -58,13 +58,14 @@ B에서는 호환 서버를 별도로 켜지 않습니다. A의 서버 창을 �
 
 런처 업데이트 버튼은 GitHub의 최신 정식 릴리스에서 launcher.exe/SHA256.txt를 내려받아
 해시와 어셈블리 버전을 검증하고 백업·교체·재시작합니다. 파일 선택창은 사용하지 않습니다.
-시험판은 자동 업데이트에 포함하지 않습니다. 현재 서버가 포함된 시험판은 **전체 ZIP으로 설치**하세요.
-이 업데이트 방식은 런처와 내장 게임 패치만 교체합니다. 서버/그래픽 런타임 변경은 전체 ZIP이 필요합니다.
+1.3.1 정식 릴리스는 기존 런처의 업데이트 버튼으로 설치할 수 있습니다.
+서버 EXE는 런처에 내장되며 서버 구동 시 `%LOCALAPPDATA%\SamchunServer\bin`에 검증 후 설치합니다.
+그래픽 런타임을 포함한 신규 설치에는 전체 ZIP을 사용하세요. 두 PC 대전은 아직 실사용 검증 전입니다.
 배포: https://github.com/japanoxx-afk/samchun/releases
 
 ## 개발 및 검증
 
-- `build.ps1 [-OutputDirectory 경로]`: .NET Framework C# x86 런처 빌드
+- `build.ps1 [-OutputDirectory 경로] [-ServerExecutable 서버EXE경로]`: .NET Framework C# x86 런처 빌드 (서버를 먼저 빌드)
 - `build-server.ps1 -Python python`: Python 3.12 + PyInstaller 6.22.3으로 서버 EXE 빌드
 - `python server/compat_server.py --bind 127.0.0.1 --data verification/server-test`: 개발 서버
 - `python tools/test_compat_server.py`: 네이티브 요청 기반 소켓 통합 테스트 (pefile/unicorn 필요)

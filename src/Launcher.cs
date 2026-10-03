@@ -8,13 +8,13 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.3.1.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
  TextBox path = new TextBox(); CheckBox window = new CheckBox(); Label status = new Label();
  ComboBox resolution = new ComboBox(); CheckBox stretch = new CheckBox();
- CheckBox rally = new CheckBox(); TextBox player = new TextBox(), serverIp = new TextBox();
+ CheckBox rally = new CheckBox(); TextBox serverIp = new TextBox();
  static readonly string[] Resolutions = {"1280 × 720 (16:9)", "1600 × 900 (16:9)", "1920 × 1080 (16:9)", "2560 × 1440 (16:9)", "3840 × 2160 (16:9)", "1280 × 960 (4:3)"};
  static readonly int[] Widths = {1280,1600,1920,2560,3840,1280}, Heights = {720,900,1080,1440,2160,960};
  [DllImport("kernel32", CharSet=CharSet.Unicode)] static extern bool WritePrivateProfileString(string section,string key,string value,string file);
@@ -25,7 +25,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) { status.Text="실패: "+e.Message; MessageBox.Show(e.Message,"작업 실패"); } }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.0 시험판"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.1"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -42,20 +42,19 @@ class Launcher : Form {
  Button("기존 그래픽 DLL / 설정 복원",420,()=>{string game=Path.GetFullPath(path.Text),dir=Path.GetDirectoryName(game),backup=Path.Combine(dir,"launcher-backup");if(Running(game))throw new Exception("게임을 종료한 뒤 복원하세요.");if(!File.Exists(Path.Combine(backup,"ddraw.dll")))throw new Exception("복원할 백업이 없습니다.");File.Copy(Path.Combine(backup,"ddraw.dll"),Path.Combine(dir,"ddraw.dll"),true);if(File.Exists(Path.Combine(backup,"ddraw.ini")))File.Copy(Path.Combine(backup,"ddraw.ini"),Path.Combine(dir,"ddraw.ini"),true);else if(File.Exists(Path.Combine(backup,"ini-was-absent")))File.Delete(Path.Combine(dir,"ddraw.ini"));window.Checked=false;rally.Checked=false;status.Text="기존 그래픽 설정 복원 완료. 원본 게임을 직접 실행하면 원복 상태로 실행됩니다.";});
  Button("런처 업데이트",467,ApplyUpdate);
  Controls.Add(new Label {Left=28,Top=519,Width=584,Height=155,Text="랠리: 건물 선택 후 땅 또는 자원 우클릭 → 랠리 지정\r\n기·오어에 우클릭 또는 수동 랠리 지정 → 생산 후 채집.\r\nF2: 전장 군사 선택 / . : 쉬는 일꾼 선택 (최대 32기)\r\n\r\n미구현: 마나 65% / 선택 수 확대\r\n복수건물 동시생산 / 순차시전"});
- Controls.Add(new Label {Text="Internet 호환 서버 · 로그인은 게임 안에서 진행",Left=28,Top=685,Width=584,Height=28});
- player.Text="Player";
+ Controls.Add(new Label {Text="인터넷 플레이 · 회원가입 / 로그인 / 대기실은 게임 안에서",Left=28,Top=685,Width=584,Height=28});
  serverIp.SetBounds(28,720,584,28);serverIp.Text="127.0.0.1";Controls.Add(serverIp);
- Controls.Add(new Label {Text="호환 서버 IPv4 주소 (A 본인: 127.0.0.1 / B: A의 IP)",Left=28,Top=752,Width=584,Height=25});
- string networkFile=Path.Combine(Root,"network-settings.txt");if(File.Exists(networkFile)){var v=File.ReadAllLines(networkFile);if(v.Length==2){player.Text=v[0];serverIp.Text=v[1];}}
- var hostButton=new Button {Text="A: 호환 서버 켜기",Left=28,Top=782,Width=280,Height=38};hostButton.Click+=(s,e)=>Guard(StartCompatServer);Controls.Add(hostButton);
- var joinButton=new Button {Text="INTERNET 게임 실행",Left=320,Top=782,Width=292,Height=38};joinButton.Click+=(s,e)=>Guard(LaunchCompat);Controls.Add(joinButton);
+ Controls.Add(new Label {Text="접속할 서버 IPv4 (내 서버: 127.0.0.1 / 다른 PC: 서버 PC의 IP)",Left=28,Top=752,Width=584,Height=25});
+ string networkFile=Path.Combine(Root,"network-settings.txt");if(File.Exists(networkFile)){var v=File.ReadAllLines(networkFile);if(v.Length==2){serverIp.Text=v[1];}}
+ var hostButton=new Button {Text="인터넷 서버 구동",Left=28,Top=782,Width=280,Height=38};hostButton.Click+=(s,e)=>Guard(StartCompatServer);Controls.Add(hostButton);
+ var joinButton=new Button {Text="입력한 서버로 게임 접속",Left=320,Top=782,Width=292,Height=38};joinButton.Click+=(s,e)=>Guard(LaunchCompat);Controls.Add(joinButton);
  status.SetBounds(28,837,584,60);status.Text="준비 완료 · 원본 EXE 보존, 패치 실행 파일은 별도로 생성합니다.";Controls.Add(status);
  }
  void StartCompatServer() {
- string exe=Path.Combine(Root,"server","samchun-server.exe");
- if(!File.Exists(exe))throw new Exception("호환 서버 파일이 없습니다. 전체 배포 ZIP을 설치하세요.");
+ foreach(var process in Process.GetProcessesByName("samchun-server")) {process.Dispose();status.Text="인터넷 서버가 이미 실행 중입니다. 내 서버 접속 주소는 127.0.0.1입니다.";return;}
+ string exe=InstallServer();
  Process.Start(new ProcessStartInfo(exe){WorkingDirectory=Path.GetDirectoryName(exe),UseShellExecute=true});
- status.Text="서버 창에서 실행 상태를 확인하세요. 이후 INTERNET 게임 실행을 누르세요.";
+ status.Text="인터넷 서버 실행 요청. 서버 창을 유지하고 입력한 서버로 게임 접속을 누르세요.";
  }
  void LaunchCompat() {
  string game=Path.GetFullPath(path.Text),ip=serverIp.Text.Trim();
@@ -68,13 +67,17 @@ class Launcher : Form {
  Process.Start(new ProcessStartInfo(launch){WorkingDirectory=Path.GetDirectoryName(game),UseShellExecute=true});
  status.Text="게임의 INTERNET → 회원가입/로그인 → 대기실. 서버: "+ip;
  }
- void LaunchNetwork(bool host) {
- string name=player.Text.Trim(),ip=serverIp.Text.Trim();NetworkPatch.Validate(host,name,ip);
- string game=Path.GetFullPath(path.Text);if(Running(game))throw new Exception("게임을 종료한 뒤 네트워크 모드를 선택하세요.");
- string launch=GamePatches.Build(game,Path.Combine(Path.GetDirectoryName(game),"3kd2-modern.exe"));NetworkPatch.Apply(launch,host,name,host?"127.0.0.1":ip);InstallWindow(game);
- File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);File.WriteAllLines(Path.Combine(Root,"network-settings.txt"),new[]{name,ip});
- Process.Start(new ProcessStartInfo(launch){WorkingDirectory=Path.GetDirectoryName(game),UseShellExecute=true});
- status.Text=host?"게임에서 Internet을 누르면 방 만들기로 이동합니다.":"게임에서 Internet을 누르면 "+ip+"에 접속합니다.";
+ internal static string InstallServer() {
+ string dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SamchunServer","bin",Assembly.GetExecutingAssembly().GetName().Version.ToString());
+ Directory.CreateDirectory(dir);string exe=Path.Combine(dir,"samchun-server.exe");
+ using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("samchun-server.exe")) {
+ if(stream==null)throw new InvalidDataException("내장 서버 파일이 없습니다. 런처 업데이트를 다시 실행하세요.");
+ byte[] data;using(var memory=new MemoryStream()){stream.CopyTo(memory);data=memory.ToArray();}
+ string expected;using(var sha=SHA256.Create())expected=BitConverter.ToString(sha.ComputeHash(data)).Replace("-","");
+ if(File.Exists(exe)&&Hash(exe)==expected)return exe;
+ string temporary=exe+"."+Guid.NewGuid().ToString("N")+".tmp";
+ try{File.WriteAllBytes(temporary,data);if(Hash(temporary)!=expected)throw new InvalidDataException("내장 서버 검증 실패");if(File.Exists(exe))File.Replace(temporary,exe,null);else File.Move(temporary,exe);}finally{if(File.Exists(temporary))File.Delete(temporary);}
+ }return exe;
  }
  void InstallWindow(string game) {
  if(!File.Exists(game))throw new Exception("게임 파일을 찾을 수 없습니다."); if(Running(game))throw new Exception("게임을 종료한 뒤 설정하세요.");
