@@ -2,9 +2,10 @@
 No game file is modified by this script; it emits launcher payload assets.
 """
 from pathlib import Path
+import os
 import struct, json, hashlib, pefile
 
-GAME=Path(r'C:\Users\seo\Downloads\DGGL\Games\3KD2120g_Win\3kd2.exe')
+GAME=Path(os.environ.get('SAMCHUN_GAME', r'C:\Users\seo\Downloads\DGGL\Games\3KD2120g_Win\3kd2.exe'))
 b=GAME.read_bytes(); p=pefile.PE(data=b)
 assert hashlib.sha256(b).hexdigest()=='a0ee96931b3b74fce739062d8e58253892510ef863e9127648ac38fd4d515f99'
 align=lambda n,a:(n+a-1)//a*a

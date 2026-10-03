@@ -11,3 +11,9 @@ tools/*-analysis.txt
 game-path.txt
 display-settings.txt
 network-settings.txt
+README-1.*.txt
+
+*.sqlite3
+*.sqlite3-*
+*.log
+/server-data/

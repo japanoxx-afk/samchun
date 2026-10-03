@@ -24,7 +24,7 @@ try:
   status=0x10002;d=bytes(ev.data)
   if ev.code==1:
    code,flags=struct.unpack_from('<II',d);address=struct.unpack_from('<Q',d,16)[0];first=struct.unpack_from('<I',d,152)[0]
-   if code!=0x80000003:
+   if code not in (0x80000003,0x4000001f):
     status=0x80010001
     if code in (0xc0000005,0xc0000374,0xc0000409) or not first:
      th=k.OpenThread(0x8,False,ev.tid);ctx=(c.c_uint32*179)();ctx[0]=0x10007
