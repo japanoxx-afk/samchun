@@ -46,5 +46,17 @@ for specs,expected in [([{},{}],'building'),([{}]*64,'building'),([{}, {'type':1
  c.u.reg_write(UC_X86_REG_EAX,len(specs));c.u.reg_write(UC_X86_REG_ESI,1);c.run(0x4127f3);assert seen==[expected],(specs,seen);cases+=1
 # Producer outside the selected buildings retains the original single command path.
 c,sent,_,_=setup([{'building':0},{}]);c.run(0xb82a00,(1,1040));assert sent==[1];cases+=1
+# Reproduce the missing upstream gate with a real ordinary building (native
+# +0x4a4 returns zero), before invoking the training button.
+for path in ('shift_click','shift_drag','drag'):
+ c,sent,_,_=setup([{},{}]);c.put(0x8dfbcc,1);c.put(S+4,0)
+ for obj in c.units:c.method(obj+0x400,0x4a4,bytes.fromhex('31 c0 c3'))
+ c.callbacks[0x573670]=lambda:c.ret(0 if path=='drag' else 1)
+ c.callbacks[0x52cf9c]=lambda:c.u.reg_write(UC_X86_REG_EIP,0x52cfa2)
+ if path=='shift_click':c.run(0x52cdc0,(c.units[1],))
+ else:
+  ptr=0x1107800;c.put(ptr,c.units[0]);c.put(ptr+4,c.units[1]);c.run(0x52d080,(ptr,2,0))
+ assert c.get(0x8dfbcc)==2,(path,c.get(0x8dfbcc))
+ c.run(0xb82a00,(1,1040));assert sent==[1,2],(path,sent);cases+=1
 print(f'{cases} production cases passed: actual button callback, 1..64 native training commands, repeat, queue capacity, costs, ownership, dead/mixed buildings and menu routing')
 

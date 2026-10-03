@@ -38,9 +38,12 @@ def build(Code, BASE):
  for typ in (0x402,0x438,0x464):
   c.emit('3d');c.n(typ);c.j('0f 84','worker')
  c.emit('85 db');c.j('0f 85','next')
- # Native military selector's unit category (includes mobile military types).
- method(0x28);c.emit('85 c0');c.j('0f 84','next')
- c.emit('89 c1 8b 00 ff 90 d4 00 00 00 83 f8 20');c.j('0f 85','next');c.j('e9','select')
+ # Military entity IDs occupy 1000..1499. Definition category 0x20
+ # covers only one movement class and omitted air/mechanical units.
+ # Workers are handled above; 0x468 is excluded by the native click selector.
+ c.emit('3d');c.n(1000);c.j('0f 8c','next')
+ c.emit('3d');c.n(1500);c.j('0f 8d','next')
+ c.emit('3d');c.n(0x468);c.j('0f 84','next');c.j('e9','select')
  c.label('worker');c.emit('83 fb 01');c.j('0f 85','next')
  # Native idle (6000) and hold/stop (3002) both use vtable+0x744.
  # Active gather/build/repair/move commands must not be selected.

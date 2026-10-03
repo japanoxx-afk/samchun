@@ -62,7 +62,10 @@ def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
  assert get(0x8dfbcc)==len(selected)
  return selected,calls,queued,registered
 army=[{},None,{'type':0x402},{'owner':1},{'dead':1},{'building':1},{'hidden':1},{'transport':1},{'transport':1,'exposed':1},{'category':0},{'type':0x450}]
-assert case(army)[0]==[0,8,10]
+assert case(army)[0]==[0,8,9,10]
+for category in (0,0x10,0x20,0x40,0x60,0x80):
+ assert case([{'category':category}])[0]==[0]
+assert case([{'type':0x468},{'type':2001},{'type':999}])[0]==[]
 workers=[{'type':t} for t in (0x402,0x438,0x464)]+[{'type':0x402,'command':c} for c in (0xbb8,0xfa1,0xfa2,0xfa3,0x7d0)]+[{'type':0x402,'queue':1},{'type':0x402,'owner':1},{'type':0x402,'dead':1},{}]
 assert case(workers,1)[0]==[0,1,2]
 for typ in (0x402,0x438,0x464):

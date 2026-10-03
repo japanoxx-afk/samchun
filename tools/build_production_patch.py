@@ -3,6 +3,15 @@ import struct
 
 def build(Code,b,payload):
  edits={}
+ # Native multi-selection accepts only six special mobile buildings through
+ # virtual +0x4a4. Remove that restriction at selection call sites only;
+ # ownership and native per-entity visibility/death checks remain intact.
+ for a,size in ((0x52ce29,2),(0x52ce5c,2),(0x52d0c6,6),(0x52d101,6),
+                (0x529b27,6),(0x529c93,6),(0x529874,2)):
+  o=a-0x400000
+  assert b[o:o+1]==(b'\x74' if size==2 else b'\x0f')
+  edits[o]=(b[o:o+size],b'\x90'*size)
+
  def patch(a,code):
   o=a-0x400000;edits[o]=(b[o:o+len(code)],code)
  def block(off,c):
