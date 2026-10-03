@@ -93,8 +93,6 @@ def build(Code, original, payload):
  c.label('discard');c.emit('8d be 84 00 00 00 b9 21 00 00 00 f3 ab 81 c6 08 01 00 00 43 83 fb 0c');c.j('0f 8c','discard')
  c.label('done');c.emit('89 f8 83 c4 64 5f 5e 5d 5b c3');block(0x2600,c)
  edit(0x5282b0,b'\xe9'+struct.pack('<i',0xb82600-0x5282b5)+b'\x90')
- from build_production_patch import build as build_production
- edits.update(build_production(Code,original,payload))
  out=bytearray(struct.pack('<I',len(edits)))
  for o,(old,new) in sorted(edits.items()):out+=struct.pack('<II',o,len(old))+old+new
  return bytes(out),edits

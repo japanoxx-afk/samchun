@@ -8,7 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.9.0")]
+[assembly: AssemblyVersion("1.3.10.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
@@ -25,7 +25,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) { status.Text="실패: "+e.Message; MessageBox.Show(e.Message,"작업 실패"); } }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.9"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.10"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -40,8 +40,9 @@ class Launcher : Form {
  Button("게임 실행",326,()=>{string game=Path.GetFullPath(path.Text); if(!File.Exists(game))throw new Exception("게임 파일을 찾을 수 없습니다."); if(Running(game))throw new Exception("게임이 이미 실행 중입니다."); string launch=rally.Checked?GamePatches.Build(game,Path.Combine(Path.GetDirectoryName(game),"3kd2-modern.exe")):game; if(rally.Checked)CompatPatch.Apply(launch,serverIp.Text.Trim()); InstallWindow(game); File.WriteAllText(Path.Combine(Root,"game-path.txt"),game); Process.Start(new ProcessStartInfo(launch){WorkingDirectory=Path.GetDirectoryName(game),UseShellExecute=true}); status.Text="게임 실행 요청 · "+(rally.Checked?"랠리 패치 사용":"원본 게임");});
  Button("해상도 / 화면모드 설정 적용",373,()=>{InstallWindow(Path.GetFullPath(path.Text));status.Text="설정 적용: "+resolution.Text+" · "+(window.Checked?"창모드":"전체화면")+". Alt+Enter로 전환 가능.";});
  Button("기존 그래픽 DLL / 설정 복원",420,()=>{string game=Path.GetFullPath(path.Text),dir=Path.GetDirectoryName(game),backup=Path.Combine(dir,"launcher-backup");if(Running(game))throw new Exception("게임을 종료한 뒤 복원하세요.");if(!File.Exists(Path.Combine(backup,"ddraw.dll")))throw new Exception("복원할 백업이 없습니다.");File.Copy(Path.Combine(backup,"ddraw.dll"),Path.Combine(dir,"ddraw.dll"),true);if(File.Exists(Path.Combine(backup,"ddraw.ini")))File.Copy(Path.Combine(backup,"ddraw.ini"),Path.Combine(dir,"ddraw.ini"),true);else if(File.Exists(Path.Combine(backup,"ini-was-absent")))File.Delete(Path.Combine(dir,"ddraw.ini"));window.Checked=false;rally.Checked=false;status.Text="기존 그래픽 설정 복원 완료. 원본 게임을 직접 실행하면 원복 상태로 실행됩니다.";});
- Button("런처 업데이트",467,ApplyUpdate);
- Controls.Add(new Label {Left=28,Top=519,Width=584,Height=155,Text="랠리: 건물 선택 후 땅 또는 자원 우클릭 → 랠리 지정\r\n기·오어에 우클릭 또는 수동 랠리 지정 → 생산 후 채집.\r\nF2: 전장 군사 선택 / . : 쉬는 일꾼 선택 (최대 64기)\r\n\r\n생산 유닛 초기 마나: 최대치의 65%\r\n마법: 클릭당 한 기씩 순차 시전\r\n같은 생산건물 복수 선택 → 동시 생산"});
+ var updateButton=Button("런처 업데이트",467,ApplyUpdate);updateButton.Width=280;
+ var notesButton=new Button {Text="패치노트",Left=320,Top=467,Width=292,Height=38};notesButton.Click+=(s,e)=>Guard(()=>{using(var dialog=CreatePatchNotesWindow())dialog.ShowDialog(this);});Controls.Add(notesButton);
+ Controls.Add(new Label {Left=28,Top=519,Width=584,Height=155,Text="랠리: 건물 선택 후 땅 또는 자원 우클릭 → 랠리 지정\r\n기·오어에 우클릭 또는 수동 랠리 지정 → 생산 후 채집.\r\nF2: 전장 군사 선택 / . : 쉬는 일꾼 선택 (최대 64기)\r\n\r\n생산 유닛 초기 마나: 최대치의 65%\r\n마법: 클릭당 한 기씩 순차 시전"});
  Controls.Add(new Label {Text="인터넷 플레이 · 회원가입 / 로그인 / 대기실은 게임 안에서",Left=28,Top=685,Width=584,Height=28});
  serverIp.SetBounds(28,720,584,28);serverIp.Text="127.0.0.1";Controls.Add(serverIp);
  Controls.Add(new Label {Text="접속할 서버 IPv4 (내 서버: 127.0.0.1 / 다른 PC: 서버 PC의 IP)",Left=28,Top=752,Width=584,Height=25});
@@ -49,6 +50,18 @@ class Launcher : Form {
  var hostButton=new Button {Text="인터넷 서버 구동",Left=28,Top=782,Width=280,Height=38};hostButton.Click+=(s,e)=>Guard(StartCompatServer);Controls.Add(hostButton);
  var joinButton=new Button {Text="입력한 서버로 게임 접속",Left=320,Top=782,Width=292,Height=38};joinButton.Click+=(s,e)=>Guard(LaunchCompat);Controls.Add(joinButton);
  status.SetBounds(28,837,584,60);status.Text="준비 완료 · 원본 EXE 보존, 패치 실행 파일은 별도로 생성합니다.";Controls.Add(status);
+ }
+ internal static Form CreatePatchNotesWindow() {
+ string notes;
+ using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("PATCH_NOTES.txt")) {
+ if(stream==null)throw new InvalidDataException("패치노트가 없습니다. 런처를 다시 업데이트하세요.");
+ using(var reader=new StreamReader(stream,System.Text.Encoding.UTF8))notes=reader.ReadToEnd();
+ }
+ var dialog=new Form {Text="삼국지 천명 2 · 패치노트",ClientSize=new Size(660,620),MinimumSize=new Size(500,400),StartPosition=FormStartPosition.CenterParent,Font=new Font("맑은 고딕",10),MinimizeBox=false,MaximizeBox=true};
+ var content=new TextBox {Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,WordWrap=true,Dock=DockStyle.Fill,BackColor=SystemColors.Window,Text=notes};
+ var close=new Button {Text="닫기",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.Cancel};
+ dialog.Controls.Add(content);dialog.Controls.Add(close);dialog.CancelButton=close;
+ return dialog;
  }
  void StartCompatServer() {
  foreach(var process in Process.GetProcessesByName("samchun-server")) {process.Dispose();status.Text="서버가 이미 실행 중입니다. 업데이트 후에는 기존 서버를 종료해야 새 서버가 적용됩니다.";return;}
