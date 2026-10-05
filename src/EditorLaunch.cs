@@ -28,12 +28,13 @@ internal static class EditorLaunch {
   Buffer.BlockCopy(replacement,0,data,offset,replacement.Length);
  }
  internal static string Build(string original) {
-  byte[] data=File.ReadAllBytes(original);string hash;
-  using(var sha=SHA256.Create())hash=BitConverter.ToString(sha.ComputeHash(data)).Replace("-","");
-  if(hash!="58D8D5399AB47BFB4D42B30C16642ED6E415CBC359025C75FD164E6131A5417D")throw new InvalidDataException("이 에디터 버전은 최대화 패치를 지원하지 않습니다. 지원되는 1.20g 원본 3kd2Edit.exe가 필요합니다.");
+  byte[] data=File.ReadAllBytes(original);
+  // Resource/version metadata may differ while the executable code is identical.
+  // Unknown code must run unmodified instead of blocking editor access.
+  if(!CompatibleLayout(data))return original;
   int width=800,height=600;
   foreach(var screen in Screen.AllScreens){width=Math.Max(width,screen.Bounds.Width+64);height=Math.Max(height,screen.Bounds.Height+64);}
-  if(width>8192||height>8192)throw new InvalidDataException("에디터가 지원하는 최대 화면 크기는 8192 × 8192입니다.");
+  if(width>8192||height>8192)return original;
   // Let MFC handle resize and min/max constraints; start the frame maximized.
   Edit(data,0x1bd9f,new byte[]{0x81,0x7d,0x0c,0x20,0x03},new byte[]{0xe9,0x4f,0,0,0});
   Edit(data,0x1c80f,new byte[]{0x75,0x20},new byte[]{0xeb,0x20});
@@ -66,5 +67,19 @@ internal static class EditorLaunch {
   foreach(var process in Process.GetProcessesByName("3kd2Edit-modern"))using(process)
    if(!process.HasExited)throw new InvalidOperationException("호환 에디터가 실행 중입니다. 기존 에디터를 종료한 뒤 다시 실행하세요.");
   File.WriteAllBytes(output,data);return output;
+ }
+ internal static bool CompatibleLayout(byte[] data) {
+  try {
+   if(data.Length<0x2c4000||BitConverter.ToUInt16(data,0)!=0x5a4d)return false;
+   int pe=BitConverter.ToInt32(data,0x3c);
+   if(pe<0||pe>data.Length-256||BitConverter.ToUInt32(data,pe)!=0x4550||BitConverter.ToUInt16(data,pe+4)!=0x14c)return false;
+   int optional=pe+24;
+   if(BitConverter.ToUInt16(data,optional)!=0x10b||BitConverter.ToUInt32(data,optional+28)!=0x400000)return false;
+   int sections=optional+BitConverter.ToUInt16(data,pe+20);
+   if(BitConverter.ToUInt16(data,pe+6)<4)return false;
+   int[] rvas={0x1000,0x277000,0x29e000,0x596000},raw={0x1000,0x277000,0x29e000,0x2c4000};
+   for(int i=0;i<4;i++)if(BitConverter.ToInt32(data,sections+i*40+12)!=rvas[i]||BitConverter.ToInt32(data,sections+i*40+20)!=raw[i])return false;
+   using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(data,0x1000,0x2c3000)).Replace("-","")=="DEBACAD1D9EACDA7FF3F8784929868716A4D8DA4750B7D24F44CAFF38652E09F";
+  }catch(ArgumentException){return false;}
  }
 }
