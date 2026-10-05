@@ -31,6 +31,7 @@ internal static class EditorLaunch {
   byte[] data=File.ReadAllBytes(original);
   // Resource/version metadata may differ while the executable code is identical.
   // Unknown code must run unmodified instead of blocking editor access.
+  if(EditorUpgrade.IsSource(data))data=EditorUpgrade.Apply(data);
   if(!CompatibleLayout(data))return original;
   int width=800,height=600;
   foreach(var screen in Screen.AllScreens){width=Math.Max(width,screen.Bounds.Width+64);height=Math.Max(height,screen.Bounds.Height+64);}
@@ -60,15 +61,19 @@ internal static class EditorLaunch {
    if(displacement> -0x1000||displacement< -0x104c)throw new InvalidDataException("에디터 지도 배열 검증 실패");
    Edit(data,offset,BitConverter.GetBytes(displacement),BitConverter.GetBytes(displacement-0x3f000));
   }
-  int mapWidth=Math.Max(570,Screen.PrimaryScreen.WorkingArea.Width-320);
-  Edit(data,0x1b8b0,BitConverter.GetBytes(570),BitConverter.GetBytes(mapWidth));
-  Edit(data,0x1b93d,BitConverter.GetBytes(570),BitConverter.GetBytes(mapWidth));
+  // Size the split panes from the editor's own WM_SIZE coordinates (DPI-safe).
+  byte[] layout={0x9c,0x60,0x8b,0x91,0x34,0x01,0,0,0x85,0xd2,0x74,0x17,0x8b,0x45,0x0c,0x2d,0x40,0x01,0,0,0x3d,0x3a,0x02,0,0,0x7d,0x05,0xb8,0x3a,0x02,0,0,0x89,0x42,0x04,0x61,0x9d,0xe9,0,0,0,0};
+  Buffer.BlockCopy(BitConverter.GetBytes(0x64dfee-(0x676c40+layout.Length)),0,layout,38,4);
+  Edit(data,0x276c40,new byte[layout.Length],layout);
+  byte[] call={0xe8,0,0,0,0};Buffer.BlockCopy(BitConverter.GetBytes(0x676c40-0x41be07),0,call,1,4);
+  Edit(data,0x1be02,new byte[]{0xe8,0xe7,0x21,0x23,0},call);
   string output=Path.Combine(Path.GetDirectoryName(original),"3kd2Edit-modern.exe");
   foreach(var process in Process.GetProcessesByName("3kd2Edit-modern"))using(process)
    if(!process.HasExited)throw new InvalidOperationException("호환 에디터가 실행 중입니다. 기존 에디터를 종료한 뒤 다시 실행하세요.");
   File.WriteAllBytes(output,data);return output;
  }
  internal static bool CompatibleLayout(byte[] data) {
+  if(EditorUpgrade.IsSource(data))return true;
   try {
    if(data.Length<0x2c4000||BitConverter.ToUInt16(data,0)!=0x5a4d)return false;
    int pe=BitConverter.ToInt32(data,0x3c);

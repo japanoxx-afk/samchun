@@ -1,4 +1,4 @@
-using System;using System.IO;using System.Reflection;using System.Diagnostics;
+﻿using System;using System.IO;using System.Reflection;using System.Diagnostics;
 class TestEditorCompatibility {
  static void Require(bool result,string message){if(!result)throw new Exception(message);}
  static int Main(string[] args){
@@ -10,6 +10,13 @@ class TestEditorCompatibility {
   var code=(byte[])original.Clone();code[0x22776]^=1;Require(!compatible(code),"Changed code accepted");
   var layout=(byte[])original.Clone();layout[pe+24+28]^=1;Require(!compatible(layout),"Changed base accepted");
   Require(!compatible(new byte[0]),"Empty editor accepted");
+  if(args.Length>2) {
+   var upgrade=a.GetType("EditorUpgrade");byte[] legacy=File.ReadAllBytes(args[2]);
+   Require((bool)upgrade.GetMethod("IsSource",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{legacy}),"Provided build rejected");
+   byte[] result=(byte[])upgrade.GetMethod("Apply",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{legacy});
+   Require(result.Length==original.Length,"Upgrade output length");for(int n=0;n<result.Length;n++)Require(result[n]==original[n],"Upgrade output differs");
+   Require(compatible(legacy),"Provided editor compatibility rejected");
+  }
   string temp=Path.Combine(Path.GetTempPath(),"samchun-editor-test-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(temp);
   try {
    foreach(string name in new[]{"3kd2.exe","3kd2edit.DBX","RES.PAK","PALETTE.PAK"})File.WriteAllBytes(Path.Combine(temp,name),new byte[0]);
