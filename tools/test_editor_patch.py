@@ -6,6 +6,13 @@ from unicorn.x86_const import UC_X86_REG_EBP
 parser=argparse.ArgumentParser()
 parser.add_argument('original');parser.add_argument('patched');args=parser.parse_args()
 old=pefile.PE(args.original);new=pefile.PE(args.patched)
+draw=[i for i in new.DIRECTORY_ENTRY_IMPORT if any(x.name==b'DirectDrawCreate' for x in i.imports)]
+assert len(draw)==1
+from pathlib import Path
+system_draw=Path(draw[0].dll.decode('mbcs'))
+assert system_draw.is_absolute() and system_draw.name.lower()=='ddraw.dll'
+assert system_draw.is_file() and system_draw.parent != Path(args.patched).resolve().parent
+assert pefile.PE(str(system_draw)).FILE_HEADER.Machine==0x14c
 assert new.get_data(0x1bd9f,5)==bytes.fromhex('e94f000000')
 assert new.get_data(0x1c80f,2)==bytes.fromhex('eb20')
 assert new.get_data(0x3f9d8,2)==bytes.fromhex('9090')

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Windows.Forms;
+using System.Text;
 
 internal static class EditorLaunch {
  internal static ProcessStartInfo Prepare(string game) {
@@ -36,6 +37,19 @@ internal static class EditorLaunch {
   int width=800,height=600;
   foreach(var screen in Screen.AllScreens){width=Math.Max(width,screen.Bounds.Width+64);height=Math.Max(height,screen.Bounds.Height+64);}
   if(width>8192||height>8192)return original;
+  // The game wrapper applies its stretching and primary-surface hooks to the
+  // editor too. Resolve only this editor's DirectDraw import to Windows' x86
+  // implementation, keeping the game's DLL and display settings untouched.
+  string system=Environment.GetFolderPath(Environment.SpecialFolder.SystemX86);
+  if(string.IsNullOrEmpty(system))system=Environment.SystemDirectory;
+  string directDraw=Path.Combine(system,"ddraw.dll");
+  if(!File.Exists(directDraw))directDraw=Path.Combine(Environment.SystemDirectory,"ddraw.dll");
+  if(!File.Exists(directDraw))throw new FileNotFoundException("Windows DirectDraw 파일을 찾을 수 없습니다.",directDraw);
+  byte[] directDrawName=Encoding.Default.GetBytes(directDraw+"\0");
+  if(Encoding.Default.GetString(directDrawName)!=directDraw+"\0")throw new InvalidDataException("Windows DirectDraw 경로를 변환할 수 없습니다.");
+  if(directDrawName.Length>256)throw new InvalidDataException("Windows DirectDraw 경로가 너무 깁니다.");
+  Edit(data,0x276d00,new byte[directDrawName.Length],directDrawName);
+  Edit(data,0x2c400c,BitConverter.GetBytes(0x597ccc),BitConverter.GetBytes(0x276d00));
   // Let MFC handle resize and min/max constraints; start the frame maximized.
   Edit(data,0x1bd9f,new byte[]{0x81,0x7d,0x0c,0x20,0x03},new byte[]{0xe9,0x4f,0,0,0});
   Edit(data,0x1c80f,new byte[]{0x75,0x20},new byte[]{0xeb,0x20});
