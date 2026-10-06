@@ -36,15 +36,20 @@ def capture(pid,profile,output,seconds):
     if count<last or count>p['capacity']:raise ValueError('Invalid native record count.')
     lost=[overflow,busy]
     if count>last:
-     raw=read(p['storage']+last*128,(count-last)*128)
+     stride=p['record_size'];prefix=p.get('command_offset',16)
+     raw=read(p['storage']+last*stride,(count-last)*stride)
      for i in range(count-last):
-      entry=raw[i*128:(i+1)*128];seq,frame,slot,size=struct.unpack_from('<IIII',entry)
+      entry=raw[i*stride:(i+1)*stride];seq,frame,slot,size=struct.unpack_from('<IIII',entry)
       if seq!=last+i or size!=111:raise ValueError('Uncommitted/corrupt diagnostic entry.')
-      cmd=entry[16:127]
-      records.append({'sequence':seq,'native_frame':frame,'slot':slot,
+      cmd=entry[prefix:prefix+111]
+      record={'sequence':seq,'native_frame':frame,'slot':slot,
                       'scheduled_frame':struct.unpack_from('<I',cmd,2)[0],
                       'command_kind':struct.unpack_from('<I',cmd,7)[0],
-                      'raw':cmd.hex(),'status':'dispatch-attempt-before-validation'})
+                      'raw':cmd.hex(),'status':'dispatch-attempt-before-validation'}
+      if p['schema']>=2:
+       thread,rng,valid=struct.unpack_from('<III',entry,16)
+       record.update(native_thread=thread,rng_state=rng if valid else None)
+      records.append(record)
      last=count
    except OSError:
     reason='process-unreadable-or-exited';break
@@ -58,7 +63,7 @@ def capture(pid,profile,output,seconds):
           'overflow_count':lost[0],'concurrent_drop_count':lost[1],
           'records':records,'reader_ms':{'samples':len(metrics),
           'mean':sum(metrics)/max(1,len(metrics)),'max':max(metrics,default=0)},
-          'limitations':['No initial state/RNG captured.','No state equality verified.',
+          'limitations':['No restorable initial state/RNG captured.','No state equality verified.',
                         'Reader timing is not game loop or network performance.',
                         'Process exit alone does not prove normal match end.']}
   output.parent.mkdir(parents=True,exist_ok=True)

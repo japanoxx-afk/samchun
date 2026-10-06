@@ -32,7 +32,8 @@ def build(source, output, profile):
     header = base+0x1000
     storage = header+0x1000
     capacity = 4096
-    payload = bytearray(0x2000+capacity*128)
+    record_size=160
+    payload = bytearray(0x2000+capacity*record_size)
     code = bytearray()
     def emit(s): code.extend(bytes.fromhex(s))
     def number(n): code.extend(struct.pack('<I',n&0xffffffff))
@@ -44,10 +45,25 @@ def build(source, output, profile):
     emit('85c0');branch('0f85','busy')
     emit('a1');number(header)
     emit('3d');number(capacity);branch('0f83','full')
-    emit('89c3 c1e007 05');number(storage);emit('89c7')
+    emit('89c3 69c0');number(record_size);emit('05');number(storage);emit('89c7')
     # Sequence, native synchronized frame, slot ID; byte length is 111.
     emit('891f a1');number(0x8a1238);emit('894704 8b01 894708')
-    emit('c7470c6f000000 83c710 8b742428 b96f000000 fc f3a4')
+    emit('c7470c6f000000')
+    # Read existing CRT TLS only; calling its allocator would change game state.
+    # x86 TEB ClientId.UniqueThread, TLS array, and expansion array.
+    emit('64a124000000 894710 31c0 894714 894718 89471c')
+    emit('8b15');number(0x72de40)
+    emit('81fa40040000');branch('0f83','tls_done')
+    emit('83fa40');branch('0f83','extended_tls')
+    emit('64a12c000000');branch('e9','tls_array')
+    labels['extended_tls']=len(code)
+    emit('83ea40 64a1940f0000')
+    labels['tls_array']=len(code)
+    emit('85c0');branch('0f84','tls_done')
+    emit('8b0490 85c0');branch('0f84','tls_done')
+    emit('8b4014 894714 c7471801000000')
+    labels['tls_done']=len(code)
+    emit('83c720 8b742428 b96f000000 fc f3a4')
     # Publish count only after copying. x86 aligned store ordering; lock is released last.
     emit('43 891d');number(header);branch('e9','unlock')
     labels['full']=len(code);emit('f0ff05');number(header+4)
@@ -77,10 +93,10 @@ def build(source, output, profile):
             raise ValueError('Existing replay backup hash mismatch.')
     else:shutil.copyfile(source,backup)
     output.parent.mkdir(parents=True,exist_ok=True);output.write_bytes(data)
-    info={'schema':1,'status':'diagnostic-only-not-replay','game_sha256':SUPPORTED,
+    info={'schema':2,'status':'diagnostic-only-not-replay','game_sha256':SUPPORTED,
           'output_sha256':hashlib.sha256(data).hexdigest(),'header':header,
-          'storage':storage,'capacity':capacity,'record_size':128,
-          'command_size':111,'hook':0x44c870,'code_address':base,
+          'storage':storage,'capacity':capacity,'record_size':record_size,
+          'command_offset':32,'command_size':111,'hook':0x44c870,'code_address':base,
           'code_hex':code.hex(),'resume':0x44c876}
     profile.parent.mkdir(parents=True,exist_ok=True)
     profile.write_text(json.dumps(info,indent=2),encoding='utf-8')
