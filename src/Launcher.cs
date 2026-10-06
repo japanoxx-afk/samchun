@@ -8,7 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.21.0")]
+[assembly: AssemblyVersion("1.3.22.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
@@ -27,7 +27,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) { status.Text="실패: "+e.Message; MessageBox.Show(e.Message,"작업 실패"); } }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.21"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.22"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -113,8 +113,8 @@ class Launcher : Form {
  }
  void InstallWindow(string game) {
  if(!File.Exists(game))throw new Exception("게임 파일을 찾을 수 없습니다."); if(Running(game))throw new Exception("게임을 종료한 뒤 설정하세요.");
- string dir=Path.GetDirectoryName(game),dll=Path.Combine(Root,@"runtime\cnc-ddraw\ddraw.dll");if(!File.Exists(dll))throw new Exception("동봉된 cnc-ddraw DLL이 없습니다.");Backup(dir,"ddraw.dll");Backup(dir,"ddraw.ini");string backup=Path.Combine(dir,"launcher-backup");if(!File.Exists(Path.Combine(dir,"ddraw.ini"))&&!File.Exists(Path.Combine(backup,"ddraw.ini")))File.WriteAllText(Path.Combine(backup,"ini-was-absent"),"");
- File.Copy(dll,Path.Combine(dir,"ddraw.dll"),true);string ini=Path.Combine(dir,"ddraw.ini");if(!File.Exists(ini))File.Copy(Path.Combine(Root,@"runtime\cnc-ddraw\ddraw.ini"),ini);
+ string graphics=GraphicsRuntime.Prepare();string dir=Path.GetDirectoryName(game),dll=Path.Combine(graphics,"ddraw.dll");Backup(dir,"ddraw.dll");Backup(dir,"ddraw.ini");string backup=Path.Combine(dir,"launcher-backup");if(!File.Exists(Path.Combine(dir,"ddraw.ini"))&&!File.Exists(Path.Combine(backup,"ddraw.ini")))File.WriteAllText(Path.Combine(backup,"ini-was-absent"),"");
+ File.Copy(dll,Path.Combine(dir,"ddraw.dll"),true);string ini=Path.Combine(dir,"ddraw.ini");if(!File.Exists(ini))File.Copy(Path.Combine(graphics,"ddraw.ini"),ini);
  ConfigureDisplay(ini,resolution.SelectedIndex,stretch.Checked,window.Checked);
  File.WriteAllLines(Path.Combine(Root,"display-settings.txt"),new[]{resolution.SelectedIndex.ToString(),stretch.Checked.ToString(),window.Checked.ToString(),rally.Checked.ToString()});
  }
