@@ -12,16 +12,26 @@ import shutil
 import struct
 from pathlib import Path
 import pefile
-from analyze_replay import SUPPORTED
+from replay_constants import SUPPORTED
 from replay_state_probe import generate as generate_state
 from replay_stable_ids import generate as generate_ids, EXPECTED as ALLOCATOR_EXPECTED
 
-def build(source, output, profile, stable_ids=False):
+MODERN_SUPPORTED='4dcb50a0bf1abb21f6289ee18680461a4ea0f7296543f5d648728469a1802f0e'
+# Only local selection/input/camera code differs; simulation and wire format
+# remain identical, so existing replays retain their simulation version.
+MODERN_BASELINES=(MODERN_SUPPORTED,'67897963686ad8682f27ed1509e654ad31b9c74fc0a6ab4860f27c99cb90b919')
+
+def build(source, output, profile, stable_ids=False, original=None, ring=False):
+    backup_original=original
     if source.resolve() == output.resolve():
         raise ValueError('Original executable cannot be overwritten.')
     data = bytearray(source.read_bytes())
-    if hashlib.sha256(data).hexdigest() != SUPPORTED:
+    baseline_hash=hashlib.sha256(data).hexdigest()
+    modern=baseline_hash in MODERN_BASELINES
+    if baseline_hash not in (SUPPORTED,)+MODERN_BASELINES:
         raise ValueError('Unsupported original SHA-256.')
+    if modern and (original is None or hashlib.sha256(original.read_bytes()).hexdigest()!=SUPPORTED):
+        raise ValueError('Modern baseline requires verified original for backup.')
     pe = pefile.PE(data=bytes(data))
     expected = bytes.fromhex('81ec18090000')
     offset = pe.get_offset_from_rva(0x4c870)
@@ -40,8 +50,8 @@ def build(source, output, profile, stable_ids=False):
     rng_capacity = 65536
     state_header=rng_storage+rng_capacity*32
     state_storage=state_header+0x1000
-    state_capacity=512
-    state_entity_capacity=512
+    state_capacity=128 if ring else 512
+    state_entity_capacity=4096 if ring else 512
     state_record_size=48+state_entity_capacity*32
     payload = bytearray(state_storage-base+state_capacity*state_record_size)
     code = bytearray()
@@ -51,11 +61,14 @@ def build(source, output, profile, stable_ids=False):
     def branch(op,label):
         emit(op);fixups.append((len(code),label));number(0)
     # Save all GPRs/flags. Original argument is at saved ESP+40.
-    emit('9c60 b801000000 87 05');number(header+12)
+    emit('9c60 833d');number(header+48);emit('00');branch('0f85','resume')
+    emit('b801000000 87 05');number(header+12)
     emit('85c0');branch('0f85','busy')
     emit('a1');number(header)
-    emit('3d');number(capacity);branch('0f83','full')
-    emit('89c3 69c0');number(record_size);emit('05');number(storage);emit('89c7')
+    if not ring:emit('3d');number(capacity);branch('0f83','full')
+    emit('89c3')
+    if ring:emit('25');number(capacity-1)
+    emit('69c0');number(record_size);emit('05');number(storage);emit('89c7')
     # Sequence, native synchronized frame, slot ID; byte length is 111.
     emit('891f a1');number(0x8a1238);emit('894704 8b01 894708')
     emit('c7470c6f000000')
@@ -96,11 +109,14 @@ def build(source, output, profile, stable_ids=False):
     def rb(op,label):
         re(op);rfix.append((len(rng_code),label));rn(0)
     re('e8');rn(0x674743-(rng_address+5))
-    re('9c60 b801000000 8705');rn(rng_header+12)
+    re('9c60 833d');rn(header+48);re('00');rb('0f85','resume')
+    re('b801000000 8705');rn(rng_header+12)
     re('85c0');rb('0f85','busy')
     re('a1');rn(rng_header)
-    re('3d');rn(rng_capacity);rb('0f83','full')
-    re('89c3 69c0');rn(32);re('05');rn(rng_storage);re('89c7 891f')
+    if not ring:re('3d');rn(rng_capacity);rb('0f83','full')
+    re('89c3')
+    if ring:re('25');rn(rng_capacity-1)
+    re('69c0');rn(32);re('05');rn(rng_storage);re('89c7 891f')
     re('a1');rn(0x8a1238);re('894704 64a124000000 894708')
     # pushad saved EAX is the helper result; original return address at ESP+36.
     re('8b44241c 89470c 8b4014 894710 8b442424 894714')
@@ -115,9 +131,12 @@ def build(source, output, profile, stable_ids=False):
     # Reaching 44C91F means decode and batch validation passed. Native dispatch
     # returns 1 even on rejection, so its return value is not acceptance evidence.
     accepted_address=base+0x600
-    accepted=bytearray(bytes.fromhex('9c60 f0ff05')+struct.pack('<I',header+20))
+    accepted=bytearray(bytes.fromhex('9c60 833d')+struct.pack('<I',header+48)+bytes.fromhex('00 0f85'))
+    accepted_skip=len(accepted);accepted.extend(bytes(4))
+    accepted.extend(bytes.fromhex('f0ff05')+struct.pack('<I',header+20))
     accepted.extend(bytes.fromhex('8b442434 f00105')+struct.pack('<I',header+24))
     accepted.extend(b'\xa1'+struct.pack('<I',0x8a1238)+b'\xa3'+struct.pack('<I',header+28))
+    struct.pack_into('<i',accepted,accepted_skip,len(accepted)-accepted_skip-4)
     accepted.extend(bytes.fromhex('619d 8b4c2410 33c0 e9'))
     accepted.extend(struct.pack('<i',0x44c925-(accepted_address+len(accepted)+4)))
     payload[0x600:0x600+len(accepted)]=accepted
@@ -130,13 +149,13 @@ def build(source, output, profile, stable_ids=False):
         raise ValueError('Native RNG bytes do not match.')
     data[rng_offset:rng_offset+5]=b'\xe9'+struct.pack('<i',rng_address-0x671425)
     state_code,state_targets=generate_state(base+0x1100,state_header,state_storage,state_capacity,
-                                           state_record_size,state_entity_capacity)
+                                           state_record_size,state_entity_capacity,ring,header+48)
     if len(state_code)>0x700:raise ValueError('State probe code overlaps allocator stub.')
     payload[0x1100:0x1100+len(state_code)]=state_code
     struct.pack_into('<II',payload,state_header-base+24,0xffffffff,0xffffffff)
     allocator_code=None
     if stable_ids:
-        allocator_code=generate_ids(base+0x1800,state_header,header+32)
+        allocator_code=generate_ids(base+0x1800,state_header,header+32,header+48)
         if len(allocator_code)>0x800:raise ValueError('Allocator code overlaps command storage.')
         payload[0x1800:0x1800+len(allocator_code)]=allocator_code
         pos=pe.get_offset_from_rva(0x45f4b)
@@ -167,10 +186,11 @@ def build(source, output, profile, stable_ids=False):
     if backup.exists():
         if hashlib.sha256(backup.read_bytes()).hexdigest()!=SUPPORTED:
             raise ValueError('Existing replay backup hash mismatch.')
-    else:shutil.copyfile(source,backup)
+    else:shutil.copyfile(backup_original if modern else source,backup)
     output.parent.mkdir(parents=True,exist_ok=True);output.write_bytes(data)
     info={'schema':3,'status':'diagnostic-only-not-replay','game_sha256':SUPPORTED,
-          'simulation_patch_version':'replay-stable-ids-experiment-1' if stable_ids else 'original-1.20g-baseline-0',
+          'simulation_patch_version':('modern-1.3.22-' if modern else '')+('replay-stable-ids-experiment-1' if stable_ids else 'original-1.20g-baseline-0'),
+          'baseline_sha256':baseline_hash,'ring_buffers':ring,
           'output_sha256':hashlib.sha256(data).hexdigest(),'header':header,
           'storage':storage,'capacity':capacity,'record_size':record_size,
           'command_offset':32,'command_size':111,'hook':0x44c870,'code_address':base,
@@ -182,7 +202,7 @@ def build(source, output, profile, stable_ids=False):
           'state_header':state_header,'state_storage':state_storage,'state_capacity':state_capacity,
           'state_code_address':base+0x1100,'state_code_hex':state_code.hex(),'state_targets':state_targets,
           'state_record_size':state_record_size,'state_entity_capacity':state_entity_capacity,
-          'state_checksum_scope':'entities-and-player-resources-not-complete-simulation','state_digest_version':3}
+          'state_checksum_scope':'entities-and-player-resources-not-complete-simulation','state_digest_version':4}
     if allocator_code:
         info.update(allocator_code_address=base+0x1800,allocator_code_hex=allocator_code.hex(),
                     allocator_error_header=header+32,allocator_resume=0x445f62)
@@ -193,6 +213,6 @@ def build(source, output, profile, stable_ids=False):
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('source',type=Path);p.add_argument('output',type=Path)
-    p.add_argument('profile',type=Path);p.add_argument('--stable-ids',action='store_true');a=p.parse_args()
-    info=build(a.source,a.output,a.profile,a.stable_ids)
+    p.add_argument('profile',type=Path);p.add_argument('--stable-ids',action='store_true');p.add_argument('--original',type=Path);p.add_argument('--ring',action='store_true');a=p.parse_args()
+    info=build(a.source,a.output,a.profile,a.stable_ids,a.original,a.ring)
     print('Diagnostic probe built; original preserved; capacity:',info['capacity'])

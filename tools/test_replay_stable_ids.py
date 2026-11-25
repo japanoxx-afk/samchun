@@ -3,7 +3,7 @@ import json,struct,sys
 from unicorn import Uc,UC_ARCH_X86,UC_MODE_32
 from unicorn.x86_const import *
 p=json.load(open(sys.argv[1],encoding='utf-8'))
-for mode in ['physical','visual','loading','unsupported','occupied','exhausted']:
+for mode in ['physical','visual','loading','stopped','unsupported','occupied','exhausted']:
  u=Uc(UC_ARCH_X86,UC_MODE_32)
  for a,s in [(p['code_address'],0x400000),(0x400000,0x300000),
              (0x800000,0x100000),(0x100000,0x100000)]:u.mem_map(a,s)
@@ -22,6 +22,7 @@ for mode in ['physical','visual','loading','unsupported','occupied','exhausted']
  u.mem_write(0x130000,struct.pack('<6H',*ids))
  if mode=='occupied':u.mem_write(0x140000+12288*4,struct.pack('<I',0x122000))
  u.mem_write(p['state_header'],struct.pack('<I',0 if mode=='loading' else 1))
+ if mode=='stopped':u.mem_write(p['header']+48,struct.pack('<I',1))
  u.mem_write(0x8a1238,struct.pack('<I',77))
  u.emu_start(p['allocator_code_address'],p['allocator_resume'],count=200000)
  chosen=12288 if mode=='physical' else 5 if mode=='visual' else ids[-1]

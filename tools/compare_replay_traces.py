@@ -2,6 +2,25 @@
 import argparse,json
 from pathlib import Path
 
+def semantic_entity_pair(expected, actual):
+    """Compare only fields belonging to the verified native object layout.
+
+    Older samples read sprite heap addresses as HP/commands. The new native
+    getter check identifies that layout without guessing from the field values.
+    Identity, type and position remain checked even for visual aliases.
+    """
+    if expected is None or actual is None:return expected,actual
+    a=dict(expected);b=dict(actual)
+    valid_a=a.pop('extended_fields_valid',None);valid_b=b.pop('extended_fields_valid',None)
+    if valid_a is not None and valid_b is not None and valid_a!=valid_b:
+        a['extended_fields_valid']=valid_a;b['extended_fields_valid']=valid_b
+        return a,b
+    if (valid_a is False or valid_b is False) and 1000<=a['type']<1556 and a['type']==b['type']:
+        for key in ['owner','hp','mana','command','target']:
+            a.pop(key,None);b.pop(key,None)
+    return a,b
+
+
 def compare(original,playback):
     def compact(row):return {k:v for k,v in row.items() if k!='entities'}
     reference={(r['native_frame'],r['phase']):r for r in original['states'] if r['valid']}
@@ -23,12 +42,15 @@ def compare(original,playback):
         other=actual.get(key)
         if other is None or row.get('unit_resource_checksum') is None or other.get('unit_resource_checksum') is None:continue
         simulation_checked+=1
-        if row['unit_resource_checksum']!=other['unit_resource_checksum']:
-            entity_changes=[]
-            a={r['id']:r for r in row.get('entities',[])};b={r['id']:r for r in other.get('entities',[])}
-            for entity_id in sorted(a.keys()|b.keys()):
-                if a.get(entity_id)!=b.get(entity_id):
-                    entity_changes.append(dict(id=entity_id,expected=a.get(entity_id),actual=b.get(entity_id)))
+        entity_changes=[]
+        a={r['id']:r for r in row.get('entities',[])};b={r['id']:r for r in other.get('entities',[])}
+        layout_verified=any('extended_fields_valid' in e for e in list(a.values())+list(b.values()))
+        complete_snapshots=bool(a or b) and not row.get('snapshot_flags') and not other.get('snapshot_flags')
+        for entity_id in sorted(a.keys()|b.keys()):
+            x,y=semantic_entity_pair(a.get(entity_id),b.get(entity_id))
+            if x!=y:entity_changes.append(dict(id=entity_id,expected=a.get(entity_id),actual=b.get(entity_id)))
+        different=bool(entity_changes) if layout_verified and complete_snapshots else row['unit_resource_checksum']!=other['unit_resource_checksum']
+        if different:
             simulation_first=dict(native_frame=key[0],phase=key[1],expected=compact(row),actual=compact(other),
                                   entity_changes=entity_changes[:20],changed_entities=len(entity_changes));break
     resources_checked=0;resources_first=None
@@ -45,6 +67,8 @@ def compare(original,playback):
     commands_equal=len(command_pairs)==len(original['records']) and all(
         all(a[k]==b[k] for k in fields_command) for a,b in command_pairs)
     return dict(entity_samples_compared=checked,first_entity_mismatch=first,
+                missing_reference_samples=[list(key) for key in sorted(reference.keys()-actual.keys())],
+                rng_calls_match=rng_first is None and len(original['rng_records'])==len(playback['rng_records']),
                 unit_resource_samples_compared=simulation_checked,first_unit_resource_mismatch=simulation_first,
                 player_resource_samples_compared=resources_checked,first_player_resource_mismatch=resources_first,
                 command_attempts_match=commands_equal,recent_commands_at_first_entity_mismatch=recent,

@@ -6,6 +6,15 @@ def verify(trace):
     if trace.get('format')!='samchun-diagnostic-trace' or not trace.get('not_a_replay'):
         raise ValueError('Expected a diagnostic trace, not a replay file.')
     issues=[]
+    if trace.get('retained_in_memory') is False and any(trace.get('stream_counts',{}).values()):
+        issues.append({'kind':'summary-only-load-journal-required'})
+    if trace.get('state_history_omitted',0):
+        issues.append({'kind':'earlier-state-samples-unavailable','count':trace['state_history_omitted']})
+    if trace.get('capture_error'):
+        issues.append({'kind':'capture-failed','details':trace['capture_error']})
+    playback=trace.get('playback_status') or {}
+    if playback.get('status') in [2,3,4,6]:
+        issues.append({'kind':'playback-failed','details':playback})
     if trace.get('allocator_status') and trace['allocator_status']['errors']:
         issues.append({'kind':'allocator-policy-failed','details':trace['allocator_status']})
     for key in ['overflow_count','concurrent_drop_count','rng_overflow_count','rng_concurrent_drop_count',

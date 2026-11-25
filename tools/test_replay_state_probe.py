@@ -23,7 +23,9 @@ for phase in ['before','after']:
  u.mem_write(0x838c98,struct.pack('<I',0x120000))
  u.mem_write(0x120000,struct.pack('<IIII',0,0x121000,0x122000,0x123000))
  for address,typ in [(0x121000,0x402),(0x122000,0x617),(0x123000,0x7533)]:
+  u.mem_write(address,struct.pack('<I',0x680000))
   u.mem_write(address+4,struct.pack('<Hhhh',typ,100,200,0))
+ u.mem_write(0x680220,struct.pack('<I',0x503c50))
  u.mem_write(0x12105e,b'\x02');u.mem_write(0x1210a1,struct.pack('<HH',70,65))
  u.mem_write(0x1210ae,struct.pack('<I',3000));u.mem_write(0x1210b7,struct.pack('<I',2))
  u.mem_write(p['state_header']+24,struct.pack('<II',0xffffffff,0xffffffff))

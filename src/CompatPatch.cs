@@ -11,7 +11,9 @@ static class CompatPatch {
   IPAddress address;
   if(!IPAddress.TryParse(ip,out address)||address.AddressFamily!=AddressFamily.InterNetwork||address.Equals(IPAddress.Any)||address.Equals(IPAddress.Broadcast))throw new ArgumentException("호환 서버의 IPv4 주소를 입력하세요.");
   ip=address.ToString();byte[] b=File.ReadAllBytes(file);int pe=BitConverter.ToInt32(b,60),opt=pe+24;
-  int section=opt+BitConverter.ToUInt16(b,pe+20)+(BitConverter.ToUInt16(b,pe+6)-1)*40;
+  int table=opt+BitConverter.ToUInt16(b,pe+20),section=-1;
+  for(int i=0;i<BitConverter.ToUInt16(b,pe+6);i++)if(Encoding.ASCII.GetString(b,table+i*40,6)==".rally"){section=table+i*40;break;}
+  if(section<0)throw new InvalidDataException("호환 서버 패치 영역 없음");
   if(Encoding.ASCII.GetString(b,section,6)!=".rally"||BitConverter.ToInt32(b,section+8)!=0x10000||b[0x60ad9]!=0xe8||BitConverter.ToInt32(b,0x60ada)!=0x4f6460-0x460ade)throw new InvalidDataException("호환 서버 패치 대상 불일치");
   int raw=BitConverter.ToInt32(b,section+20);if(b.Length<raw+0x10000)throw new InvalidDataException("Incomplete game payload");
   Array.Copy(Encoding.ASCII.GetBytes(ip+"\0"),0,b,raw+0x1500,ip.Length+1);
@@ -44,6 +46,19 @@ static class CompatPatch {
   b[0xf7b6a]=1;
   // Empty password is permitted; password confirmation and upper bounds remain.
   b[0xae3d0]=0x90;b[0xae3d1]=0x90;b[0xae41a]=0x90;b[0xae41b]=0x90;
+  // Host's new-room path, after map metadata and before lobby control binding.
+  // Native controls 55F/3FF/565 bind room +212/+21A/+232 respectively.
+  // Set defaults once; do not overwrite later slider/checkbox changes or joins.
+  if(b[0x898b3]!=0xbf||BitConverter.ToInt32(b,0x898b4)!=1)throw new InvalidDataException("인터넷 방 기본 설정 패치 대상 불일치");
+  for(int i=0;i<64;i++)if(b[raw+0x1600+i]!=0)throw new InvalidDataException("인터넷 방 기본 설정 패치 영역 사용 중");
+  using(var m=new MemoryStream())using(var w=new BinaryWriter(m)){
+   w.Write(new byte[]{0x9c,0xc7,0x80});w.Write(0x212);w.Write(0);
+   w.Write(new byte[]{0xc7,0x80});w.Write(0x21a);w.Write(255);
+   w.Write(new byte[]{0xc7,0x80});w.Write(0x232);w.Write(1);
+   w.Write(new byte[]{0x9d,0xbf,1,0,0,0,0xe9});w.Write(0x4898b8-(0xb81600+(int)m.Position+4));
+   Array.Copy(m.ToArray(),0,b,raw+0x1600,m.Length);
+  }
+  b[0x898b3]=0xe9;Put(b,0x898b4,0xb81600-0x4898b8);
   File.WriteAllBytes(file,b);
  }
 }

@@ -23,6 +23,14 @@ LOG = logging.getLogger('samchun')
 HEADER = struct.Struct('<IBH')
 MAX_PACKET = 1024
 
+def transport_id(account_id):
+    # Native 42ACA0 treats 0 as broadcast and 1 as the room-host alias.
+    # A host silently skips unicast destination 1 (42AD06..42AD4B).
+    # Database identity must never be used directly as a peer destination.
+    if not 1 <= account_id <= 0xfffffffc:
+        raise ValueError('account identity outside native transport range')
+    return account_id + 1
+
 def u32(b, offset=0):
     return struct.unpack_from('<I', b, offset)[0]
 
@@ -158,6 +166,7 @@ class LobbyHandler(socketserver.BaseRequestHandler):
     def setup(self):
         self.world = self.server.world
         self.uid = 0
+        self.account_id = 0
         self.name = ''
         self.channel = 1
         self.room = 0
@@ -218,10 +227,12 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             self.send(0x94, b'\x01' if op == 0x30 else b'\x00')
             return
         with self.world.lock:
-            if any(c.uid == result[0] for c in self.world.clients):
+            if any(c.account_id == result[0] for c in self.world.clients):
                 self.send(0x94, b'\x03')
                 return
-            self.uid, self.name = result
+            self.account_id, self.name = result
+            self.uid = transport_id(self.account_id)
+            LOG.info('authenticated account=%d peer=%d identity-policy=reserved-0-1', self.account_id, self.uid)
             # Authenticated players may remain in a match without lobby requests.
             self.request.settimeout(None)
             put32(self.record, 0, self.uid)
@@ -240,7 +251,7 @@ class LobbyHandler(socketserver.BaseRequestHandler):
         elif op == 1 and len(b) == 683:
             # A result often arrives AFTER room-leave; retain the match ticket.
             if self.match_relay and text(b,1,16).casefold() == self.name.casefold():
-                stored = self.world.accounts.record_result(self.match_id, self.uid, b[0])
+                stored = self.world.accounts.record_result(self.match_id, self.account_id, b[0])
                 LOG.info('match result user=%d outcome=%d stored=%s', self.uid, b[0], stored)
             # Native result sender is fire-and-forget; do not enqueue a reply.
         elif op == 2 and len(b) == 17:
@@ -404,7 +415,7 @@ class RelayHandler(socketserver.BaseRequestHandler):
                             LOG.info('relay frame room=%d user=%d destination=%d size=%d', self.rid, self.uid, destination, size)
                         peers = [r for (group, user), r in world.relays.items()
                                  if group == self.rid and user != self.uid
-                                 and (destination in (0, 0xffffffff, self.rid) or destination == user)]
+                                 and (destination in (0, 0xffffffff) or destination == user)]
                     for peer in peers:
                         peer.send(frame)
         except (OSError, EOFError, ValueError, struct.error):
@@ -459,6 +470,7 @@ def main():
         LOG.info('3KD2 compatibility server listening on %s:%d', args.bind, args.port)
         LOG.info('Accounts are local to this server. Native protocol has no TLS; use a private LAN/VPN.')
         LOG.info('Native game relay listening on TCP %d', args.relay_port)
+        LOG.info('Server 1.3.45: native peer IDs reserve 0/1; account and statistics IDs unchanged')
         try:
             server.serve_forever()
         except KeyboardInterrupt:

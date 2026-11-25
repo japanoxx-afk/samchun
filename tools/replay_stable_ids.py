@@ -8,13 +8,16 @@ No object is destroyed, moved in memory, or silently overwritten.
 """
 import struct
 EXPECTED=bytes.fromhex('a1f8476c008b0d9c8c830033f6668b344148a3f8476c00')
-def generate(base,state_header,error_header):
+def generate(base,state_header,error_header,stop=0):
     code=bytearray();labels={};fix=[]
     def e(s):code.extend(bytes.fromhex(s))
     def n(v):code.extend(struct.pack('<I',v&0xffffffff))
     def label(s):labels[s]=len(code)
     def branch(op,s):e(op);fix.append((len(code),s));n(0)
-    e('9c60 833d');n(state_header);e('00');branch('0f84','native')
+    e('9c60')
+    if stop:
+        e('833d');n(stop);e('00');branch('0f85','native')
+    e('833d');n(state_header);e('00');branch('0f84','native')
     e('813d');n(0x6c3edc);n(16384);branch('0f85','unsupported')
     # Once armed, verify that the checkpoint did not occupy the reserved range.
     e('833d');n(error_header+12);e('00');branch('0f85','ready')

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Net;
 using System.Reflection;
@@ -12,6 +12,7 @@ static class OnlineUpdate {
  internal static string Sha(string file) {using(var s=File.OpenRead(file))using(var h=SHA256.Create())return BitConverter.ToString(h.ComputeHash(s)).Replace("-","");}
  static byte[] Get(string url,int limit) {
   var request=(HttpWebRequest)WebRequest.Create(url);request.UserAgent="samchun-launcher";request.Timeout=15000;request.ReadWriteTimeout=15000;
+  request.CachePolicy=new System.Net.Cache.RequestCachePolicy(System.Net.Cache.RequestCacheLevel.NoCacheNoStore);
   using(var response=request.GetResponse())using(var s=response.GetResponseStream())using(var m=new MemoryStream()) {
    byte[] buffer=new byte[16384];int n;while((n=s.Read(buffer,0,buffer.Length))>0){if(m.Length+n>limit)throw new InvalidDataException("업데이트 파일 크기 제한 초과");m.Write(buffer,0,n);}return m.ToArray();
   }
@@ -41,6 +42,9 @@ static class OnlineUpdate {
   return selected;
  }
  internal static string Download(Version current) {
+  return DownloadWithProgress(current,null);
+ }
+ internal static string DownloadWithProgress(Version current,Action<string> progress) {
   ServicePointManager.SecurityProtocol=(SecurityProtocolType)3072;
   byte[] json;
   try{json=Get(Api,1024*1024);}catch(WebException e){var r=e.Response as HttpWebResponse;if(r!=null&&r.StatusCode==HttpStatusCode.NotFound)throw new InvalidOperationException("공개된 업데이트 릴리스가 아직 없습니다.");throw;}
@@ -50,6 +54,7 @@ static class OnlineUpdate {
   Version v;if(!Version.TryParse(tag,out v))throw new InvalidDataException("릴리스 버전 오류");
   v=new Version(v.Major,v.Minor,Math.Max(0,v.Build),Math.Max(0,v.Revision));if(v<=current)return null;
   string executable=Asset(release,"launcher.exe"),checksum=Asset(release,"SHA256.txt");
+  if(progress!=null)progress("새 버전 "+v.ToString(3)+" 발견 · 자동 다운로드 중…");
   string expected=System.Text.Encoding.ASCII.GetString(Get(checksum,1024)).Trim();
   string stage=Path.Combine(Path.GetTempPath(),"3kd2-update-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
   try {string file=Path.Combine(stage,"launcher.new.exe");File.WriteAllBytes(file,Get(executable,32*1024*1024));Verify(file,expected,v);File.WriteAllText(Path.Combine(stage,"SHA256.txt"),expected);return file;}

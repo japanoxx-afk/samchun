@@ -10,12 +10,16 @@ parser.add_argument('tag')
 parser.add_argument('package')
 parser.add_argument('--assets-directory', type=Path, default=Path('dist'))
 parser.add_argument('--prerelease', action='store_true')
+parser.add_argument('--versioned-executable', type=Path)
+parser.add_argument('--notes-file', type=Path, default=Path('RELEASE_NOTES.md'))
 args = parser.parse_args()
 tag, package = args.tag, args.package
 launcher = args.assets_directory/'launcher.exe'
 checksum = args.assets_directory/'SHA256.txt'
 if hashlib.sha256(launcher.read_bytes()).hexdigest().lower() != checksum.read_text().strip().lower():
     raise SystemExit('Launcher checksum mismatch')
+if args.versioned_executable and args.versioned_executable.read_bytes()!=launcher.read_bytes():
+    raise SystemExit('Versioned launcher and update launcher differ')
 with zipfile.ZipFile(package) as archive:
     if archive.read('launcher.exe') != launcher.read_bytes():
         raise SystemExit('ZIP and update launcher differ')
@@ -34,11 +38,13 @@ def request(url, data=None, method=None, content_type='application/json'):
     with urllib.request.urlopen(req, timeout=60) as response:
         return json.load(response)
 
-body = Path('RELEASE_NOTES.md').read_text(encoding='utf-8-sig')
+body = args.notes_file.read_text(encoding='utf-8-sig')
 release = request(base + '/releases', json.dumps(dict(tag_name=tag, target_commitish='main',
     name='samchun ' + tag, body=body, draft=True, prerelease=args.prerelease)).encode(), 'POST')
 print('Draft release created:', release['id'])
-for path in [launcher, checksum, Path(package)]:
+assets=[launcher,checksum,Path(package)]
+if args.versioned_executable:assets.append(args.versioned_executable)
+for path in assets:
     url = release['upload_url'].split('{')[0] + '?name=' + urllib.parse.quote(path.name)
     asset = request(url, path.read_bytes(), 'POST', 'application/octet-stream')
     print('Uploaded:', asset['name'], asset['size'])

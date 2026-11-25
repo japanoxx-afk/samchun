@@ -6,7 +6,7 @@ still being analyzed. No pointer values or selection/camera data are hashed.
 """
 import struct
 
-def generate(base,header,storage,capacity,record_size=32,entity_capacity=0):
+def generate(base,header,storage,capacity,record_size=32,entity_capacity=0,ring=False,stop=0):
     code=bytearray();labels={};fix=[]
     def e(s):code.extend(bytes.fromhex(s))
     def n(v):code.extend(struct.pack('<I',v&0xffffffff))
@@ -15,23 +15,33 @@ def generate(base,header,storage,capacity,record_size=32,entity_capacity=0):
     def call(address):e('e8');n(address-(base+len(code)+4))
     # Original main-loop call targets, not entire prologue replacement.
     label('before');e('9c60 31db');jump('e8','sample');e('619d');call(0x44c200);e('c3')
-    label('after');call(0x502340);e('9c60 bb01000000');jump('e8','sample')
+    label('after');call(0x502340);e('9c60 bb01000000')
+    e('833d');n(header+36);e('00');jump('0f84','sample_after')
+    e('a1');n(0x8a1238);e('3b05');n(header+32);jump('0f82','sample_after')
+    e('c705');n(header+44);n(1)
+    label('sample_after');jump('e8','sample')
     # Diagnostic playback stops only AFTER the reference final update/sample.
     # Recording leaves this disabled. This is not the finished replay end UI.
     e('833d');n(header+36);e('00');jump('0f84','after_return')
     e('a1');n(0x8a1238);e('3b05');n(header+32);jump('0f82','after_return')
     e('c705');n(0x837f24);n(1)
     e('c705');n(header+40);n(1)
+    if stop:e('c705');n(stop);n(1)
     label('after_return');e('619d c3')
     label('sample')
+    if stop:e('833d');n(stop);e('00');jump('0f85','return')
     e('a1');n(0x8a1238)
     # Each phase has its own last frame. Sampling at frame boundaries avoids
     # inconsistent external ReadProcessMemory snapshots during object updates.
     e('8b149d');n(header+24);e('83faff');jump('0f84','due')
+    e('833d');n(header+44);e('00');jump('0f85','due')
     e('89c1 29d1 83f91e');jump('0f82','return')
     label('due');e('89049d');n(header+24)
+    e('c705');n(header+44);n(0)
     e('b801000000 8705');n(header+12);e('85c0');jump('0f85','busy')
-    e('a1');n(header);e('3d');n(capacity);jump('0f83','full')
+    e('a1');n(header)
+    if ring:e('25');n(capacity-1)
+    else:e('3d');n(capacity);jump('0f83','full')
     e('69c0');n(record_size);e('05');n(storage);e('89c7')
     e('a1');n(header);e('8907 a1');n(0x8a1238);e('894704 895f08')
     e('a1');n(0x6c3edc);e('894718 31c9 894f10')
@@ -48,6 +58,9 @@ def generate(base,header,storage,capacity,record_size=32,entity_capacity=0):
     # Only unit/building type range uses validated extended fields.
     e('0fb74204 3d00040000');jump('0f82','next')
     e('3d14060000');jump('0f83','next')
+    # Type is shared by sprites and simulation units. Only the independently
+    # verified native HP getter identifies the extended simulation layout.
+    e('8b02 81b820020000503c5000');jump('0f85','next')
     for encoded in ['0fb6425e','8b82a1000000','8b82ae000000','8b82b7000000']:
         e(encoded+' 31c5 69ed93010001')
     label('next');e('43');jump('e9','object')
@@ -63,6 +76,7 @@ def generate(base,header,storage,capacity,record_size=32,entity_capacity=0):
     for encoded in ['8b4204','8b4208']:
         e(encoded+' 31c1 69c993010001')
     e('0fb74204 3d14060000');jump('0f83','capture_entity' if entity_capacity else 'simulation_next')
+    e('8b02 81b820020000503c5000');jump('0f85','capture_entity' if entity_capacity else 'simulation_next')
     for encoded in ['0fb6425e','8b82a1000000','8b82ae000000','8b82b7000000']:
         e(encoded+' 31c1 69c993010001')
     if entity_capacity:
@@ -71,8 +85,9 @@ def generate(base,header,storage,capacity,record_size=32,entity_capacity=0):
         e('51 52 89e8 c1e005 01f8 83c030 8918')
         e('0fb74a04 894804 8b4a06 894808 0fb74a0a 89480c')
         e('c7401000000000 c7401400000000 c7401800000000 c7401c00000000')
+        e('8b0a 81b920020000503c5000');jump('0f85','entity_copied')
         e('0fb74a04 81f914060000');jump('0f83','entity_copied')
-        e('8a4a5e 88480e 8b8aa1000000 894810 8b8aae000000 894814 8b8ab7000000 894818')
+        e('c7401c01000000 8a4a5e 88480e 8b8aa1000000 894810 8b8aae000000 894814 8b8ab7000000 894818')
         label('entity_copied');e('5a 59 45');jump('e9','simulation_next')
         label('entity_full');e('ff472c')
     label('simulation_next');e('43');jump('e9','simulation_object')
@@ -99,4 +114,4 @@ def generate(base,header,storage,capacity,record_size=32,entity_capacity=0):
     label('busy');e('f0ff05');n(header+8)
     label('return');e('c3')
     for position,name in fix:struct.pack_into('<i',code,position,labels[name]-position-4)
-    return bytes(code),{name:base+labels[name] for name in ['before','after']}
+    return bytes(code),{name:base+labels[name] for name in ['before','after','sample']}

@@ -31,6 +31,18 @@ with tempfile.TemporaryDirectory() as data:
   a.send(0x11,struct.pack('<I',rid));a.send(1,result_packet(1,'FrozenA')[7:]);a.send(1,result_packet(1,'FrozenA')[7:])
   b.send(0x11,struct.pack('<I',rid));b.send(1,result_packet(2,'FrozenB')[7:])
   assert query(a,'FrozenA')==(1,0,0,1) and query(b,'FrozenB')==(0,1,0,1)
+  # First account now joins the second account's room. Execute the original
+  # native host send path to ensure the packet is not swallowed by alias 1.
+  from test_compat_peer_identity import native_send
+  for s in peers:s.close()
+  peers.clear()
+  b.send(0xe,record);reverse_room=b.receive(0x7e);rid=u32(reverse_room,15)
+  a.send(0xf,struct.pack('<I',rid));assert a.receive(0x7e)[0]==1
+  for c,name in ((b,'FrozenB'),(a,'FrozenA')):
+   sock=socket.create_connection(('127.0.0.1',relay));sock.settimeout(3);peers.append(sock)
+   sock.sendall(struct.pack('<IIIII',1,0x130,36,rid,c.uid)+name.encode().ljust(16,b'\0'));assert len(read_exact(sock,20))==20
+  native_frame=native_send(b.uid,a.uid,rid)[0];peers[0].sendall(native_frame)
+  assert read_exact(peers[1],len(native_frame))==native_frame
  finally:
   for s in peers:s.close()
   for c in clients:c.close()
@@ -40,5 +52,5 @@ with tempfile.TemporaryDirectory() as data:
   assert a.auth('FrozenA',False)[0]==2 and b.auth('FrozenB',False)[0]==2
   assert query(a,'FrozenA')==(1,0,0,1) and query(b,'FrozenB')==(0,1,0,1)
  finally:a.close();b.close();stop(p)
- print('Packaged server passed native result storage, duplicate suppression, restart/relogin and native statistics parser')
+ print('Packaged server passed reverse-host native reply, result storage, duplicate suppression, restart/relogin and native statistics parser')
 

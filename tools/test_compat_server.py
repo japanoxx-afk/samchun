@@ -2,7 +2,7 @@
 import socket, struct, tempfile, threading, unittest, sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'server'))
-from compat_server import World,LobbyServer,RelayHandler,packet,read_exact,puttext,put32,u32
+from compat_server import World,LobbyServer,RelayHandler,packet,read_exact,puttext,put32,u32,transport_id
 from test_compat_native import account_call
 from test_stats_native import result_packet, parse_statistics
 
@@ -49,7 +49,7 @@ class CompatibilityTest(unittest.TestCase):
         self.assertEqual(self.client().auth('TesterA')[0],1)
         self.assertEqual(self.client().auth('TesterA',False,'wrong')[0],0)
         dbbytes=self.db.read_bytes();self.assertNotIn(b'Test123',dbbytes)
-        reopened=World(self.db);self.assertEqual(reopened.accounts.authenticate('testera','Test123')[0],a.uid)
+        reopened=World(self.db);self.assertEqual(transport_id(reopened.accounts.authenticate('testera','Test123')[0]),a.uid)
     def test_lobby_rooms_chat_and_relay(self):
         a,b=self.client(),self.client();self.assertEqual(a.auth('TesterA')[0],2);self.assertEqual(b.auth('TesterB')[0],2)
         a.send(0x10);self.assertEqual(u32(a.receive(0x7f)),0)
@@ -88,11 +88,12 @@ class CompatibilityTest(unittest.TestCase):
         self.assertEqual(query(a,'TesterB'),(0,1,0,1))
         reopened=World(self.db)
         self.assertEqual(parse_statistics(reopened.accounts.statistics('TesterA')),(1,0,0,1))
-        self.assertFalse(reopened.accounts.record_result(next(c.match_id for c in self.world.clients if c.uid==a.uid),a.uid,1))
-        self.assertTrue(reopened.accounts.record_result('second-match',a.uid,2))
+        account_id=reopened.accounts.authenticate('TesterA','Test123')[0]
+        self.assertFalse(reopened.accounts.record_result(next(c.match_id for c in self.world.clients if c.uid==a.uid),account_id,1))
+        self.assertTrue(reopened.accounts.record_result('second-match',account_id,2))
         self.assertEqual(parse_statistics(reopened.accounts.statistics('TesterA')),(1,1,0,2))
         # Native result 4 is a non-counting match, not a request to reset history.
-        self.assertTrue(reopened.accounts.record_result('no-contest',a.uid,4))
+        self.assertTrue(reopened.accounts.record_result('no-contest',account_id,4))
         self.assertEqual(parse_statistics(reopened.accounts.statistics('TesterA')),(1,1,0,2))
     def test_repeated_room_creation_without_login(self):
         a=self.client();self.assertEqual(a.auth('RepeatA')[0],2)

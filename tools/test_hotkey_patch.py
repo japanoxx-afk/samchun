@@ -9,11 +9,13 @@ from test_selection_patch import IMAGE
 PAYLOAD=Path('dist/runtime/patches/rally.bin').read_bytes()
 BASE=0xb80000;STACK=0x1108000;END=0x110f000;EVENT=0x1109000
 n=lambda x:struct.pack('<I',x)
-def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
+def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None,taps=None,details=False):
  u=Uc(UC_ARCH_X86,UC_MODE_32);u.mem_map(0x400000,0x800000);u.mem_write(0x400000,IMAGE);u.mem_write(BASE,PAYLOAD);u.mem_map(0x1000000,0x200000)
  def put(a,v):u.mem_write(a,n(v))
  def get(a):return struct.unpack('<I',u.mem_read(a,4))[0]
  put(0x838ca8,focus);put(0x851854,modal);u.mem_write(0x8cd7f8,bytes([locked]));put(0x838c98,0x1100000);put(0x6c3edc,len(specs));put(0x71f864,0x8cc128)
+ put(0x838c78,0x110a000);put(0x110a024,100|(200<<16));put(0x110a034,10|(6<<16))
+ put(0x8c7890,640);put(0x8c78b0,384);put(0x68218c,0x1112000)
  # Real native AddSelection; mock virtual accessors only, with per-entity fields.
  st=0x1110000
  def stub(data):
@@ -22,6 +24,7 @@ def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
  getters={0x24:stub(bytes.fromhex('0f b7 41 04 c3')),0x214:stub(bytes.fromhex('0f b6 41 5e c3'))}
  for off,field in [(0x128,0x60),(0x250,0x64),(0x69c,0x68),(0x678,0x6c),(0x5b8,0x70)]:getters[off]=stub(bytes([0x8b,0x41,field,0xc3]))
  getters[0x28]=stub(bytes.fromhex('8b 41 74 c3'))
+ getters[0xb8]=stub(bytes.fromhex('8b442404 8b9180000000 8910 8b9184000000 895004 c20400'))
  select=stub(bytes.fromhex('51 e8')+struct.pack('<i',0x52c690-(st+6))+bytes.fromhex('83 c4 04 c3'))
  # above relative call computed using stub address (st before allocation)
  cat=stub(bytes.fromhex('8b 41 04 c3'))
@@ -32,9 +35,10 @@ def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
   for field,key in [(0x60,'building'),(0x64,'dead'),(0x68,'hidden'),(0x6c,'transport'),(0x70,'exposed')]:put(obj+field,s.get(key,0))
   put(obj+0x74,definition);put(definition,dt);put(definition+4,s.get('category',0x20));put(dt+0xd4,cat)
   put(obj+0xae,s.get('command',0));u.mem_write(obj+0x13a,bytes([s.get('queue',0)]))
+  x,y=s.get('position',(200+i*15,300));put(obj+0x80,(x&65535)|((y&65535)<<16));put(obj+0x84,0)
   for off,a in getters.items():put(table+off,a)
   put(table+0x170,select)
- calls=[];queued=[];registered=[]
+ calls=[];queued=[];registered=[];cameras=[];tick=1000
  def ret(value=1,pop=0):
   sp=u.reg_read(UC_X86_REG_ESP);u.reg_write(UC_X86_REG_EAX,value);u.reg_write(UC_X86_REG_EIP,get(sp));u.reg_write(UC_X86_REG_ESP,sp+4+pop)
  def hook(uc,a,size,data):
@@ -46,6 +50,8 @@ def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
   elif a==0x5737a0:
    sp=u.reg_read(UC_X86_REG_ESP);registered.append(tuple(get(sp+i) for i in (4,8,12)));ret()
   elif a==0x517ac5:calls.append('native');u.emu_stop()
+  elif a==0x1112000:ret(tick)
+  elif a==0x44ec40:cameras.append(get(u.reg_read(UC_X86_REG_ESP)+4));ret()
  u.hook_add(UC_HOOK_CODE,hook)
  put(STACK,END);put(STACK+4,mode);put(EVENT,0x100);put(EVENT+15,mode)
  if entry==0xf00:put(STACK+4,EVENT)
@@ -54,13 +60,15 @@ def case(specs,mode=0,focus=0,modal=0,locked=0,entry=None):
  u.reg_write(UC_X86_REG_ESP,STACK)
  saved={UC_X86_REG_EBX:0x1234,UC_X86_REG_ESI:0x5678,UC_X86_REG_EDI:0x9abc,UC_X86_REG_EBP:0xdef0}
  for r,v in saved.items():u.reg_write(r,v)
- u.emu_start(BASE+(0x1000 if entry is None else entry),END,count=100000)
+ for tick in taps or [1000]:
+  put(STACK,END);u.reg_write(UC_X86_REG_ESP,STACK)
+  u.emu_start(BASE+(0x1000 if entry is None else entry),END,count=100000)
  assert u.reg_read(UC_X86_REG_EIP)==END
  assert u.reg_read(UC_X86_REG_ESP)==STACK+4
  for r,v in saved.items():assert u.reg_read(r)==v
  selected=[i for i,s in enumerate(specs) if s is not None and 0x1000000+i*0x1000 in struct.unpack('<64I',u.mem_read(0xb84000,256))]
  assert get(0x8dfbcc)==len(selected)
- return selected,calls,queued,registered
+ return (selected,calls,queued,registered,cameras) if details else (selected,calls,queued,registered)
 army=[{},None,{'type':0x402},{'owner':1},{'dead':1},{'building':1},{'hidden':1},{'transport':1},{'transport':1,'exposed':1},{'category':0},{'type':0x450}]
 assert case(army)[0]==[0,8,9,10]
 for category in (0,0x10,0x20,0x40,0x60,0x80):
@@ -83,5 +91,20 @@ for kw in ({'focus':1},{'modal':1},{'locked':1}):
 assert case([],entry=0xe00)[2]==[(0x100,0)]
 assert case([],entry=0xe80)[2]==[(0x100,1)]
 assert case(workers,mode=1,entry=0xf00)[0]==[0,1,2]
-assert case([],entry=0xd00)[3]==[(0,0xcf,0x52b4b0),(0,0x34,BASE+0xe80)]
+assert case([],entry=0xd00)[3]==[(0,0xcf,0x52b4b0),(0,0x34,BASE+0xe80),(0,0x33,BASE+0xd80)]
+assert case([],entry=0xd80)[2]==[(0x100,2)]
+screen=[{'type':0x402,'position':p} for p in [(100,200),(739,583),(99,200),(740,200),(100,199),(100,584),(500,400)]]
+assert case(screen,2)[0]==[0,1,6]
+assert case(screen,2,entry=0xf00)[0]==[0,1,6]
+def packed(x,y):return (x&65535)|((y&65535)<<16)
+idle=[{'type':0x402,'position':(1000+i*100,1000)} for i in range(3)]
+assert case(idle,1,details=True)[4]==[]
+assert case(idle,1,taps=[1000,1500],details=True)[4]==[]
+assert case(idle,1,taps=[1000,1400],details=True)[4]==[packed(680,808)]
+assert case(idle,1,taps=[1000,1100,1200,1300,1400,1500,1600,1700],details=True)[4]==[packed(x,808) for x in [680,780,880,680]]
+assert len(case([{'type':0x402}]*70,1,taps=[1000,1100],details=True)[0])==64
+assert case([{'type':0x402,'command':0xfa1}],1,taps=[1000,1100],details=True)[4]==[]
+for kw in ({'focus':1},{'modal':1},{'locked':1}):
+ assert case(screen,2,taps=[1000,1100],details=True,**kw)[4]==[]
 print('38 hotkey scenarios passed: mixed ownership, workers/tasks/queues, map-wide military, capacity, input guards, enqueue/dispatch and registration stack')
+print('PASS comma viewport edges, native queue registration, double-press timing, sequential centers/wrap, capacity and input guards')

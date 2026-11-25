@@ -9,30 +9,38 @@ from pathlib import Path
 import pefile
 from build_replay_probe import build
 from verify_replay_trace import verify
-from analyze_replay import SUPPORTED
+from replay_constants import SUPPORTED
 
-def playback(source,trace_path,output,profile):
+def playback(source,trace_path,output,profile,original=None,checkpoint=None,allow_partial_diagnostic=False,ring=False):
     trace=json.loads(trace_path.read_text(encoding='utf-8'))
     if trace.get('game_sha256')!=SUPPORTED:raise ValueError('Trace game hash is unsupported.')
     result=verify(trace)
-    if result['issues']:raise ValueError('Diagnostic has missing/discontinuous data.')
+    issues=result['issues']
+    if allow_partial_diagnostic:
+        issues=[x for x in issues if x['kind']!='earlier-state-samples-unavailable']
+    if issues:raise ValueError('Diagnostic has missing/discontinuous data.')
     states=trace.get('states',[])
-    if not states or not states[0]['valid'] or states[0]['phase']!=0:
+    initial=trace.get('initial_checkpoint')
+    initial_frame=initial['native_frame'] if initial else (states[0]['native_frame'] if states else None)
+    if not states or not states[0]['valid'] or (not initial and states[0]['phase']!=0):
         raise ValueError('Missing initial pre-dispatch entity checkpoint.')
+    if initial and (not initial.get('native_save_succeeded') or not initial.get('rng_valid')):
+        raise ValueError('Invalid initial checkpoint metadata.')
     commands=trace['records']
-    if not commands:raise ValueError('No commands to test.')
-    if any(x['slot']!=0 for x in commands):raise ValueError('Only verified single-slot experiment supported.')
+    allowed=(initial or {}).get('slot_ids',[0])
+    if any(x['slot'] not in allowed for x in commands):raise ValueError('Command has an absent participant slot.')
     if trace.get('accepted_status') and trace['accepted_status']['validated_dispatches']!=len(commands):
         raise ValueError('Experiment contains unvalidated command attempts.')
-    if any(x['native_frame']<states[0]['native_frame'] for x in commands):
+    if any(x['native_frame']<initial_frame for x in commands):
         raise ValueError('Commands precede initial checkpoint.')
     final=max((r for r in states if r['valid'] and r['phase']==1),key=lambda r:r['native_frame'],default=None)
-    if final is None or final['native_frame']<commands[-1]['native_frame']:
+    if final is None or (commands and final['native_frame']<commands[-1]['native_frame']):
         raise ValueError('Missing final post-update checkpoint.')
     version=trace.get('simulation_patch_version','original-1.20g-baseline-0')
-    if version not in ['original-1.20g-baseline-0','replay-stable-ids-experiment-1']:
+    if version not in ['original-1.20g-baseline-0','replay-stable-ids-experiment-1','modern-1.3.22-replay-stable-ids-experiment-1']:
         raise ValueError('Unsupported simulation patch version.')
-    info=build(source,output,profile,stable_ids=version=='replay-stable-ids-experiment-1')
+    info=build(source,output,profile,stable_ids=version.endswith('replay-stable-ids-experiment-1'),original=original,ring=ring)
+    if info['simulation_patch_version']!=version:raise ValueError('Trace and native baseline simulation patches differ.')
     data=bytearray(output.read_bytes());pe=pefile.PE(data=bytes(data));section=pe.sections[-1]
     end_pos=section.PointerToRawData+info['state_header']-info['code_address']+32
     struct.pack_into('<II',data,end_pos,final['native_frame'],1)
@@ -57,7 +65,7 @@ def playback(source,trace_path,output,profile):
     e('9c60')
     # Validate restored frame at first native drain. Mismatched loading fails closed.
     e('a1');n(header+4);e('85c0');branch('0f85','loop')
-    e('a1');n(0x8a1238);e('3d');n(states[0]['native_frame']);branch('0f85','bad_initial')
+    e('a1');n(0x8a1238);e('3d');n(initial_frame);branch('0f85','bad_initial')
     e('c705');n(header+4);n(1)
     label('loop');e('a1');n(header+4);e('83f801');branch('0f85','return')
     e('8b1d');n(header);e('81fb');n(len(commands));branch('0f83','finished')
@@ -70,11 +78,12 @@ def playback(source,trace_path,output,profile):
     e('8d4608 50');call(0x44c870)
     e('47 3b3d');n(info['accepted_counter']);branch('0f85','rejected')
     e('ff05');n(header);branch('e9','loop')
-    label('bad_initial');e('c705');n(header+4);n(2);branch('e9','return')
-    label('late');e('c705');n(header+4);n(3);branch('e9','return')
-    label('bad_slot');e('c705');n(header+4);n(4);branch('e9','return')
-    label('rejected');e('c705');n(header+4);n(6);branch('e9','return')
-    label('finished');e('c705');n(header+4);n(5)
+    label('bad_initial');e('c705');n(header+4);n(2);branch('e9','failure')
+    label('late');e('c705');n(header+4);n(3);branch('e9','failure')
+    label('bad_slot');e('c705');n(header+4);n(4);branch('e9','failure')
+    label('rejected');e('c705');n(header+4);n(6);branch('e9','failure')
+    label('finished');e('c705');n(header+4);n(5);branch('e9','return')
+    label('failure');e('c705');n(0x837f24);n(1)
     label('return');e('619d c3')
     for pos,name in fix:struct.pack_into('<i',code,pos,labels[name]-pos-4)
     if len(code)>0x200:raise ValueError('Playback stub overlaps validation stub.')
@@ -93,17 +102,38 @@ def playback(source,trace_path,output,profile):
     struct.pack_into('<I',data,section.get_file_offset()+16,raw_size)
     struct.pack_into('<I',data,pe.OPTIONAL_HEADER.get_field_absolute_offset('SizeOfImage'),
                      align(section.VirtualAddress+size,pe.OPTIONAL_HEADER.SectionAlignment))
+    if initial and initial.get('context_mode')==2:
+        # Preserve multiplayer simulation context; replace only its external clock.
+        for site,expected,replacement in [
+            (0x4e3110,bytes.fromhex('81ec00010000'),b'\xe9'+struct.pack('<i',0x4e2fc0-0x4e3110-5)+b'\x90'),
+            (0x40c4cf,bytes.fromhex('752b'),bytes.fromhex('eb2b')),
+            (0x44431d,bytes.fromhex('750a'),bytes.fromhex('eb0a')),
+            # Loaded network queues retain distinct receive/commit cursors.
+            # Playback dispatch replaces the native drain, so do not run the
+            # live-session clock handshake on these serialized queues.
+            (0x40c57b,b'\xe8'+struct.pack('<i',0x44e550-0x40c57b-5),bytes.fromhex('83c4089090'))]:
+            position=pe.get_offset_from_rva(site-0x400000)
+            if data[position:position+len(expected)]!=expected:raise ValueError('Offline network clock boundary mismatch: '+hex(site))
+            data[position:position+len(expected)]=replacement
+        info['offline_multiplayer_clock']=True
+    from replay_observer import apply as apply_observer
+    apply_observer(data,pefile.PE(data=bytes(data)),info)
+    from replay_controls_patch import apply as apply_controls
+    apply_controls(data,pefile.PE(data=bytes(data)),info)
     output.write_bytes(data)
     info.update(status='single-checkpoint-playback-experiment-not-released',
                 output_sha256=hashlib.sha256(data).hexdigest(),playback_header=header,
-                playback_storage=storage,playback_count=len(commands),playback_initial_frame=states[0]['native_frame'],
+                playback_storage=storage,playback_count=len(commands),playback_initial_frame=initial_frame,
                 playback_end_frame=final['native_frame'],playback_end_flag=info['state_header']+40,
                 playback_code_address=address,playback_code_hex=code.hex(),
-                required_checkpoint_sha256='db015576f7af34cc913b2485f17b083d0adcd d96ff8f0467cb733ea5f30d3cf4'.replace(' ',''))
+                required_checkpoint_sha256=hashlib.sha256(checkpoint.read_bytes()).hexdigest() if checkpoint else 'db015576f7af34cc913b2485f17b083d0adcd d96ff8f0467cb733ea5f30d3cf4'.replace(' ',''))
     profile.write_text(json.dumps(info,indent=2),encoding='utf-8')
     print('Experimental command playback built:',len(commands),'commands; not a finished replay.')
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     for name in ['source','trace','output','profile']:p.add_argument(name,type=Path)
-    a=p.parse_args();playback(a.source,a.trace,a.output,a.profile)
+    p.add_argument('--original',type=Path);p.add_argument('--checkpoint',type=Path)
+    p.add_argument('--allow-partial-diagnostic',action='store_true')
+    p.add_argument('--ring',action='store_true')
+    a=p.parse_args();playback(a.source,a.trace,a.output,a.profile,a.original,a.checkpoint,a.allow_partial_diagnostic,a.ring)
