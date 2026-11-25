@@ -13,6 +13,8 @@ using System.Web.Script.Serialization;
 // are never uploaded. The site links each replay to the internet server's match record.
 static class ArenaUpload {
  internal const string DefaultSite="http://112.159.73.235:30013";
+ // Address people open in a browser (NAS reverse proxy, HTTPS). Uploads keep the direct port above.
+ internal const string PublicSite="https://akansas.synology.me";
  const long MaxBytes=64L*1024*1024;            // same limit as the site (arena/games/samchun.py)
  const int SettleSeconds=15;                     // the replay writer renames .writing -> .screplay when done
  static readonly string StateFile=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SamchunLauncher","arena-upload.json");

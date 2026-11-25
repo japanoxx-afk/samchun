@@ -8,7 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.59.0")]
+[assembly: AssemblyVersion("1.3.60.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
@@ -30,7 +30,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) {string log=LauncherDiagnostics.Save(e);status.Text="실패: "+e.Message;MessageBox.Show(e.Message+(log==null?"":"\r\n오류 로그: "+log),"작업 실패");} }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.59"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.60"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -42,7 +42,7 @@ class Launcher : Form {
  Controls.Add(new Label {Text="화면 출력 크기를 확대합니다. 전장 시야 범위는 원본과 같습니다.\r\n가득 채우기 해제: 원본 화면비를 유지하며 좌우 여백을 표시합니다.",Left=28,Top=231,Width=584,Height=48});
  rally.Text="랠리·자동채집·입력창·F2/일꾼 선택 패치";rally.SetBounds(28,282,584,28);rally.Checked=true;Controls.Add(rally);
  if(File.Exists(settingsFile)){string[] values=File.ReadAllLines(settingsFile);bool value;if(values.Length>=4&&bool.TryParse(values[3],out value))rally.Checked=value;}
- var gameButton=Button("게임 실행",326,()=>{string game=GamePath();if(!File.Exists(game))throw new Exception("게임 파일(3kd2.exe)을 찾을 수 없습니다. 위쪽 '찾기' 버튼으로 게임 위치를 지정하세요.");if(Running(game))throw new Exception("게임이 이미 실행 중입니다.");NetworkPatch.Validate(false,"Player",serverIp.Text.Trim());rally.Checked=true;InstallWindow(game);File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);ReplayEngine.Start(game,null,serverIp.Text.Trim());status.Text="게임 실행 · 싱글/멀티·연속 경기 자동 기록 시험";});gameButton.Width=280;
+ var gameButton=Button("게임 실행",326,LaunchCompat);gameButton.Width=280;   // 1.3.60: 싱글·INTERNET 모두 이 버튼 하나 (서버 = 아래 칸, 기본 NAS)
  var editorButton=new Button {Text="에디터 실행",Left=320,Top=326,Width=292,Height=38};editorButton.Click+=(s,e)=>Guard(()=>{string game=GamePath();var start=EditorLaunch.Prepare(game);Process.Start(start);File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);status.Text=Path.GetFileName(start.FileName).Equals("3kd2Edit-modern.exe",StringComparison.OrdinalIgnoreCase)?"에디터 실행 · 최대화 / 16비트 색상 호환":"에디터 실행 · 기본 호환 모드 (이 버전은 최대화 패치 미적용)";});Controls.Add(editorButton);
  Button("해상도 / 화면모드 설정 적용",373,()=>{InstallWindow(GamePath());status.Text="설정 적용: "+resolution.Text+" · "+(window.Checked?"창모드":"전체화면")+". Alt+Enter로 전환 가능.";});
  Button("기존 그래픽 DLL / 설정 복원",420,()=>{string game=GamePath(),dir=Path.GetDirectoryName(game),backup=Path.Combine(dir,"launcher-backup");if(Running(game))throw new Exception("게임을 종료한 뒤 복원하세요.");if(!File.Exists(Path.Combine(backup,"ddraw.dll")))throw new Exception("복원할 백업이 없습니다.");File.Copy(Path.Combine(backup,"ddraw.dll"),Path.Combine(dir,"ddraw.dll"),true);if(File.Exists(Path.Combine(backup,"ddraw.ini")))File.Copy(Path.Combine(backup,"ddraw.ini"),Path.Combine(dir,"ddraw.ini"),true);else if(File.Exists(Path.Combine(backup,"ini-was-absent")))File.Delete(Path.Combine(dir,"ddraw.ini"));window.Checked=false;rally.Checked=false;status.Text="기존 그래픽 설정 복원 완료. 원본 게임을 직접 실행하면 원복 상태로 실행됩니다.";});
@@ -52,25 +52,23 @@ class Launcher : Form {
  var replayButton=Button("리플레이 · 시험 기능",640,()=>{InstallWindow(GamePath());using(var dialog=new ReplayWindow(path.Text))dialog.ShowDialog(this);});replayButton.Width=184;
  var errorLogsButton=new Button {Text="오류 폴더 열기",Left=222,Top=640,Width=184,Height=38};errorLogsButton.Click+=(s,e)=>Guard(LauncherDiagnostics.OpenFolder);Controls.Add(errorLogsButton);
  var reportButton=new Button{Text="오류 리포트 ZIP 저장",Left=416,Top=640,Width=196,Height=38};reportButton.Click+=(s,e)=>Guard(()=>{using(var dialog=new SaveFileDialog{Filter="오류 리포트 ZIP|*.zip",FileName="Samchun-ErrorReport-"+DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss")+".zip",DefaultExt="zip",AddExtension=true,OverwritePrompt=true})if(dialog.ShowDialog(this)==DialogResult.OK){LauncherDiagnostics.ExportZip(dialog.FileName);status.Text="오류 리포트 저장 완료: "+dialog.FileName;}});Controls.Add(reportButton);
- Controls.Add(new Label {Text="인터넷 플레이 · 회원가입 / 로그인 / 대기실은 게임 안에서",Left=28,Top=685,Width=584,Height=28});
+ Controls.Add(new Label {Text="인터넷 플레이 · '게임 실행' 후 게임에서 INTERNET → 회원가입 / 로그인 / 대기실",Left=28,Top=685,Width=584,Height=28});
  serverIp.SetBounds(28,720,584,28);serverIp.Text=DefaultServer;Controls.Add(serverIp);
- Controls.Add(new Label {Text="접속할 서버 IPv4 (기본: NAS 서버 "+DefaultServer+" / 내 PC 서버: 127.0.0.1)",Left=28,Top=752,Width=584,Height=25});
+ Controls.Add(new Label {Text="인터넷 서버 IPv4 (기본: NAS 서버 "+DefaultServer+")",Left=28,Top=752,Width=584,Height=25});
  string networkFile=Path.Combine(Root,"network-settings.txt");if(File.Exists(networkFile)){var v=File.ReadAllLines(networkFile);if(v.Length==2){serverIp.Text=v[1];}if(serverIp.Text.Trim()=="127.0.0.1"&&!File.Exists(Path.Combine(Root,"server-default-1.3.59.txt"))){serverIp.Text=DefaultServer;try{File.WriteAllText(Path.Combine(Root,"server-default-1.3.59.txt"),"moved from 127.0.0.1");}catch(IOException){}catch(UnauthorizedAccessException){}}}
- var hostButton=new Button {Text="인터넷 서버 구동",Left=28,Top=782,Width=280,Height=38};hostButton.Click+=(s,e)=>Guard(StartCompatServer);Controls.Add(hostButton);
- var joinButton=new Button {Text="입력한 서버로 게임 접속",Left=320,Top=782,Width=292,Height=38};joinButton.Click+=(s,e)=>Guard(LaunchCompat);Controls.Add(joinButton);
  // Replay upload to RTS ARENA is always on (1.3.59): only 2+ player internet matches are sent.
- var arenaButton=new Button{Text="전적 사이트 열기",Left=432,Top=898,Width=180,Height=34};arenaButton.Click+=(s,e)=>Guard(()=>Process.Start(ArenaUpload.DefaultSite+"/samchun/matches"));Controls.Add(arenaButton);
- Controls.Add(new Label{Text="인터넷 대전(사람 2명 이상) 리플레이는 전적 사이트에 자동으로 올라갑니다.",Left=28,Top=902,Width=400,Height=28});
- arenaStatus.SetBounds(28,934,584,24);arenaStatus.ForeColor=Color.DimGray;Controls.Add(arenaStatus);
+ var arenaButton=new Button{Text="전적 사이트 열기",Left=432,Top=836,Width=180,Height=34};arenaButton.Click+=(s,e)=>Guard(()=>Process.Start(ArenaUpload.PublicSite+"/samchun/matches"));Controls.Add(arenaButton);
+ Controls.Add(new Label{Text="인터넷 대전(사람 2명 이상) 리플레이는 전적 사이트에 자동으로 올라갑니다.",Left=28,Top=840,Width=400,Height=28});
+ arenaStatus.SetBounds(28,872,584,24);arenaStatus.ForeColor=Color.DimGray;Controls.Add(arenaStatus);
  ArenaUpload.StatusChanged+=text=>{if(IsHandleCreated&&!IsDisposed)try{BeginInvoke((Action)(()=>arenaStatus.Text=text));}catch(InvalidOperationException){}};
  ArenaUpload.Start(()=>ArenaUpload.ReplayFolder(path.Text),ArenaUpload.DefaultSite);arenaStatus.Text="리플레이 자동 업로드 · 대전 리플레이를 기다리는 중";
- status.SetBounds(28,837,584,60);status.Text="준비 완료 · 원본 EXE 보존, 패치 실행 파일은 별도로 생성합니다.";Controls.Add(status);
+ status.SetBounds(28,782,584,50);status.Text="준비 완료 · 원본 EXE 보존, 패치 실행 파일은 별도로 생성합니다.";Controls.Add(status);
  foreach(Control control in Controls)if(control.Top>=231)control.Top+=44;
  Controls.Add(new Label{Text="게임 비디오 모드",Left=28,Top=234,Width=145,Height=28});
  video.SetBounds(175,230,330,30);video.DropDownStyle=ComboBoxStyle.DropDownList;video.Items.AddRange(VideoMode.Names);video.SelectedIndex=VideoMode.Read(path.Text);Controls.Add(video);
  video.SelectedIndexChanged+=delegate{if(video.SelectedIndex==1||video.SelectedIndex==2)status.Text="Direct3D·Voodoo 호환 드라이버로 선택한 모드를 적용합니다. 창모드 설정을 지원하며 실제 적용 모드를 확인합니다.";};
  path.TextChanged+=delegate{video.SelectedIndex=VideoMode.Read(path.Text);};
- AutoScroll=true;AutoScrollMinSize=new Size(640,1010);ClientSize=new Size(640,Math.Min(1010,Math.Max(500,Screen.PrimaryScreen.WorkingArea.Height-60)));
+ AutoScroll=true;AutoScrollMinSize=new Size(640,950);ClientSize=new Size(640,Math.Min(950,Math.Max(500,Screen.PrimaryScreen.WorkingArea.Height-60)));
  Shown+=delegate{ApplyUpdate(true);};
  string videoReport=Path.Combine(LauncherDiagnostics.Folder,"video-last.json");DateTime lastVideo=File.Exists(videoReport)?File.GetLastWriteTimeUtc(videoReport):DateTime.MinValue;
  var videoTimer=new System.Windows.Forms.Timer{Interval=1000};videoTimer.Tick+=delegate{try{if(!File.Exists(videoReport)||File.GetLastWriteTimeUtc(videoReport)==lastVideo)return;var report=new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(videoReport));lastVideo=File.GetLastWriteTimeUtc(videoReport);status.Text=(report.ContainsKey("failed")&&Convert.ToBoolean(report["failed"])?"비디오 초기화 실패 · 오류 리포트 ZIP을 저장해 주세요. ":"비디오 모드 · ")+"요청: "+Convert.ToString(report["requested"])+" / 실제 적용: "+Convert.ToString(report["actual"])+(Convert.ToBoolean(report["fallback"])?" · 요청 모드 초기화 실패. 오류 리포트 ZIP으로 상세 정보를 저장할 수 있습니다.":"");}catch(IOException){}catch(ArgumentException){} };videoTimer.Start();FormClosed+=delegate{videoTimer.Dispose();if(updateTimer!=null)updateTimer.Dispose();};
@@ -121,14 +119,14 @@ class Launcher : Form {
  }finally {foreach(var process in processes)process.Dispose();}
  }
  void LaunchCompat() {
- string game=GamePath(),ip=serverIp.Text.Trim();
+ string game=GamePath(),ip=serverIp.Text.Trim();if(ip.Length==0){ip=DefaultServer;serverIp.Text=ip;}
  NetworkPatch.Validate(false,"Player",ip);
  if(Running(game))throw new Exception("게임을 종료한 뒤 실행하세요.");
  rally.Checked=true;InstallWindow(game);
  File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);
  File.WriteAllLines(Path.Combine(Root,"network-settings.txt"),new[]{"Player",ip});
  ReplayEngine.Start(game,null,ip);
- status.Text="멀티 기록 시험 · 참가자 모두 같은 런처 필요. INTERNET → 회원가입/로그인 → 대기실. 서버: "+ip;
+ status.Text="게임 실행 · 싱글은 그대로, 인터넷은 게임에서 INTERNET → 회원가입/로그인 → 대기실 (서버 "+ip+")";
  }
  internal static string InstallServer() {
  string dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"SamchunServer","bin",Assembly.GetExecutingAssembly().GetName().Version.ToString());

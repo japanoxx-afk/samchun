@@ -228,7 +228,7 @@ Python 및 PyInstaller 배포 고지는 licenses/에 포함합니다.
 ## 리플레이 자동 업로드 (런처 1.3.58)
 
 런처가 `<게임 폴더>\Replays\*.screplay` 를 30초마다 확인해 **사람 2명 이상 인터넷 대전** 리플레이를
-RTS ARENA(`http://112.159.73.235:30013`, `POST /api/samchun/replays`)에 올립니다. 코드: `src/ArenaUpload.cs`.
+RTS ARENA(보기: https://akansas.synology.me/samchun/matches, 업로드: `http://112.159.73.235:30013` `POST /api/samchun/replays`)에 올립니다. 코드: `src/ArenaUpload.cs`.
 
 - 올리지 않음: `multiplayer=false`(싱글·나 + 컴퓨터), 이름 있는 참가자 2명 미만, `_test`·`_diagnostic`·진단 기록,
   저장 후 15초가 안 된 파일, 64MB 초과.
