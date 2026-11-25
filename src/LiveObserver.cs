@@ -69,7 +69,7 @@ internal sealed class LiveObserverContext : ApplicationContext {
   using(var g=Graphics.FromHwnd(IntPtr.Zero))dpi=g.DpiX/96;
   var value=new StringBuilder(32);string ini=Path.Combine(Path.GetDirectoryName(file),"ddraw.ini");GetPrivateProfileString("ddraw","maintas","false",value,32,ini);string fallback=value.ToString();value.Length=0;GetPrivateProfileString(Path.GetFileNameWithoutExtension(file),"maintas",fallback,value,32,ini);aspect=value.ToString().Equals("true",StringComparison.OrdinalIgnoreCase);
   panel.LiveMode=true;panel.Text="실시간 관전 자원 현황";var initialFont=new Font("맑은 고딕",9);ownedFonts.Add(initialFont);panel.Font=initialFont;
-  keyboard=Keyboard;keyboardHandle=SetWindowsHookEx(13,keyboard,GetModuleHandle(null),0);if(keyboardHandle==IntPtr.Zero)throw new IOException("관전 단축키 연결 실패");
+  keyboard=Keyboard;   // 1.3.62: the global keyboard hook exists only while observing (see SetHook)
   timer.Interval=150;timer.Tick+=delegate{RefreshPanel();};timer.Start();
   File.WriteAllText(Path.Combine(work,"live-observer-ready"),"participant-read-only; private-HUD-flag");
  }
@@ -78,8 +78,8 @@ internal sealed class LiveObserverContext : ApplicationContext {
   try {
    var state=LiveObserverSnapshot.Capture(Read,initial,ending,generation,cleaned,p=>workers.Count(Read,p));
    IntPtr window=game.MainWindowHandle;RECT r;POINT origin=new POINT();
-   if(state==null||window==IntPtr.Zero||!GetClientRect(window,out r)||r.Right<100||r.Bottom<100||!ClientToScreen(window,ref origin)){panel.Hide();if(hadObserver){hud.Reset();hadObserver=false;}return;}
-   hadObserver=true;
+   if(state==null||window==IntPtr.Zero||!GetClientRect(window,out r)||r.Right<100||r.Bottom<100||!ClientToScreen(window,ref origin)){panel.Hide();if(hadObserver){hud.Reset();hadObserver=false;}SetHook(false);return;}
+   hadObserver=true;SetHook(true);
    if(previousGeneration!=state.Generation||previousContext!=state.Context){show=true;hud.Reset();workers.Clear();previousGeneration=state.Generation;previousContext=state.Context;}
    bool active=GetForegroundWindow()==window;
    if(!active||!show||hud.Hidden){panel.Hide();return;}
@@ -95,12 +95,15 @@ internal sealed class LiveObserverContext : ApplicationContext {
   if(code>=0){int key=Marshal.ReadInt32(data),m=message.ToInt32();bool down=m==0x100||m==0x104;
    if(key==73||key==85){bool held=key==73?iDown:uDown;if(!down){if(key==73)iDown=false;else uDown=false;}
     if(hadObserver&&GetForegroundWindow()==game.MainWindowHandle){
-     if(down&&!held){if(key==73){iDown=true;show=!show;}else{uDown=true;try{hud.Set(!hud.Hidden);}catch(IOException){panel.Hide();}}RefreshPanel();}
+     if(down&&!held){if(key==73){iDown=true;show=!show;}else{uDown=true;try{hud.Set(!hud.Hidden);}catch(IOException){panel.Hide();}}}
      return new IntPtr(1);
     }
    }
   }return CallNextHookEx(keyboardHandle,code,message,data);
  }
  Point NativeCursor(IntPtr window,RECT r,POINT origin){byte[] b=Read(0x837f20,4);int w=U(0xb1f95c),h=U(0xb1f960);if(b==null||w<320||w>8192||h<200||h>8192)return Cursor.Position;int x=BitConverter.ToInt16(b,0),y=BitConverter.ToInt16(b,2);if(x<0||y<0||x>=w||y>=h)return Cursor.Position;double sx=(double)r.Right/w,sy=(double)r.Bottom/h;if(aspect)sx=sy=Math.Min(sx,sy);return new Point(origin.X+(int)((r.Right-w*sx)/2+x*sx),origin.Y+(int)((r.Bottom-h*sy)/2+y*sy));}
+ // Players never get a global low-level keyboard hook: it delays every key press while
+ // this process is busy and is the only place keys are swallowed (I/U, observers only).
+ void SetHook(bool on){if(on&&keyboardHandle==IntPtr.Zero)keyboardHandle=SetWindowsHookEx(13,keyboard,GetModuleHandle(null),0);else if(!on&&keyboardHandle!=IntPtr.Zero){UnhookWindowsHookEx(keyboardHandle);keyboardHandle=IntPtr.Zero;iDown=uDown=false;}}
  protected override void ExitThreadCore(){timer.Dispose();if(keyboardHandle!=IntPtr.Zero)UnhookWindowsHookEx(keyboardHandle);hud.Reset();panel.Close();foreach(var font in ownedFonts)font.Dispose();ownedFonts.Clear();if(memory!=IntPtr.Zero)CloseHandle(memory);game.Dispose();base.ExitThreadCore();}
 }

@@ -140,9 +140,13 @@ def configure(executable,profile,directory,requested_mode=None):
         import_directory=pe.OPTIONAL_HEADER.DATA_DIRECTORY[1]
         struct.pack_into('<II',data,import_directory.get_file_offset(),block-0x400000,table_size)
         install_failure_guard(data,info)
-        if mode == 3:
-            install_input_recovery(data, info)
-            install_input_wakeup(data, info)
+    # Keyboard recovery for EVERY renderer (1.3.62). The native DirectInput reader
+    # (0x590cbc/0x590d01) re-acquires only after DIERR_INPUTLOST; a keyboard that is
+    # DIERR_NOTACQUIRED (game started or returned while another window had focus:
+    # chat, Discord, launcher...) stayed dead for the rest of the session. This was
+    # first fixed for Voodoo only (1.3.55/1.3.56); the code path is renderer-independent.
+    install_input_recovery(data, info)
+    install_input_wakeup(data, info)
     executable.write_bytes(data);info['output_sha256']=hashlib.sha256(data).hexdigest();profile.write_text(json.dumps(info,indent=2))
     env=os.environ.copy();env.pop('RENDER3D',None)
     if mode:env['RENDER3D']={1:'DIRECT3D',2:'SOFTWARE',3:'VOODOO'}[mode]
