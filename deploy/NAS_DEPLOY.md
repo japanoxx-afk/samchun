@@ -83,15 +83,16 @@ data 폴더는 들어 있지 않으므로 올려도 NAS 의 계정·전적이 �
 
 ## 5. 전적 사이트(RTS ARENA)와 연결
 
-rtsarena 스택의 Environment variables 에 한 줄 추가 → **Update the stack**:
+rtsarena 저장소 main(2026-11-26 이후)이 삼국지천명2 를 지원한다. NAS 에 반영하는 순서:
 
-| 이름 | 값 |
-|---|---|
-| `SAMCHUN_MATCHES_FILE` | `/mnt/game-servers/samchun-live/data/matches.json` |
+1. rtsarena 폴더에서 `.\deploy\Prepare-NasUpload.ps1` → File Station `rtsarena/app/arena` 덮어쓰기.
+2. Portainer → Stacks → `rtsarena` → **Editor** 에 rtsarena 의 새 `deploy/compose.yaml` 붙여 넣기 → **Update the stack**.
+   새 compose 에는 `SAMCHUN_MATCHES_FILE=/mnt/game-servers/samchun-live/data/matches.json` 이 들어 있다
+   (같은 `game_servers_data` 볼륨이라 파일을 바로 읽는다, 1분마다 동기화). 기존 `ARENA_UPLOAD_TOKEN` 환경변수는 그대로 둔다.
+3. `http://akansas.synology.me:30013/healthz` 의 `sync.samchun.error` 가 비어 있으면 연결됨.
 
-(같은 `game_servers_data` 볼륨이라 파일을 바로 읽는다. 1분마다 동기화.)
-사이트 상단 드롭박스에서 **삼국지천명2** 를 고르면 리더보드·전적기록이 이 서버 기록으로 바뀐다.
-rtsarena 코드도 삼국지천명2 를 지원하는 버전으로 올려야 한다 (rtsarena 저장소 `deploy/NAS_DEPLOY.md` 5. 코드 업데이트).
+사이트 상단 드롭박스에서 **삼국지천명2** 를 고르면 리더보드·전적기록·게임통계·맵통계 메뉴와 전적이 이 서버 기록으로 바뀐다.
+리더보드 = 게임 안 랭킹 (같은 점수 규칙·순서). 리플레이 업로드는 아직 없다 (경기 카드에 "리플레이 미지원").
 
 ## 6. 운영
 
