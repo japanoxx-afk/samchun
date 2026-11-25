@@ -82,6 +82,30 @@ class RelayLatencyTest(unittest.TestCase):
         b.send(1, result_packet(2, 'LeaveB')[7:])
         a.send(2, b'\x03'+b'LeaveB'.ljust(16, b'\0')); self.assertEqual(parse_statistics(a.receive(0x7a)), (0, 1, 0, 1))
 
+    def test_locked_database_keeps_players_connected_and_results(self):
+        a, b = self.client('DiskA'), self.client('DiskB')
+        rid, socks = self.room(a, b)
+        time.sleep(0.3)
+        import sqlite3
+        from contextlib import contextmanager
+        accounts = self.world.accounts
+        real = accounts.db
+        @contextmanager
+        def broken():
+            raise sqlite3.OperationalError('database is locked')
+            yield
+        accounts.db = broken
+        try:
+            a.send(0x11, struct.pack('<I', rid)); a.send(1, result_packet(1, 'DiskA')[7:])
+            # statistics still answer (default record) and the connection stays open
+            a.send(2, b'\x03'+b'DiskA'.ljust(16, b'\0')); self.assertEqual(parse_statistics(a.receive(0x7a)), (0, 0, 0, 0))
+            a.send(3, struct.pack('<II', 1, 7)); self.assertEqual(a.receive(0x93), bytes(4))
+            self.assertEqual(len(accounts.pending), 1)
+        finally:
+            accounts.db = real
+        self.assertTrue(accounts.retry_pending())
+        a.send(2, b'\x03'+b'DiskA'.ljust(16, b'\0')); self.assertEqual(parse_statistics(a.receive(0x7a)), (1, 0, 0, 1))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

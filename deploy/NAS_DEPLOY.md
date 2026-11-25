@@ -68,13 +68,13 @@ data 폴더는 들어 있지 않으므로 올려도 NAS 의 계정·전적이 �
    Status/ranking JSON on http://0.0.0.0:4902/ (healthz, matches.json, ranking.json)
    3KD2 compatibility server listening on 0.0.0.0:4800
    Native game relay listening on TCP 4901
-   Server 1.3.59: in-game personal ranking, match history export (/mnt/game-servers/samchun-live/data/matches.json), relay nodelay=True
+   Server 1.3.60: in-game personal ranking, match history export (/mnt/game-servers/samchun-live/data/matches.json), relay nodelay=True, sqlite file locking=False
    ```
 6. File Station 에서 `samchun-live/data` 에 `accounts.sqlite3`, `matches.json`, `server.log` 가 생겼는지 확인.
 
 ## 4. 접속 확인
 
-- (VM 안 / 같은 망) 브라우저 `http://<VM 내부 IP>:4902/healthz` → `{"ok": true, "version": "1.3.59", ...}`
+- (VM 안 / 같은 망) 브라우저 `http://<VM 내부 IP>:4902/healthz` → `{"ok": true, "version": "1.3.60", ...}`
 - 게임 PC 런처: **서버 주소 = `112.159.73.235`** (런처는 IPv4 숫자만 받는다. `akansas.synology.me` 는 안 됨)
   → **입력한 서버로 게임 접속** → 게임에서 **INTERNET** → 회원가입/로그인.
   NAS 서버를 쓸 때는 런처의 **인터넷 서버 구동** 버튼을 누르지 않는다 (그건 내 PC 에 서버를 켜는 버튼).
@@ -101,5 +101,7 @@ rtsarena 저장소 main(2026-11-26 이후)이 삼국지천명2 를 지원한다.
 - **백업**: 서버를 잠깐 멈추거나(Stop) 접속자 없을 때 `samchun-live/data/accounts.sqlite3` 를 `backups/data-YYYYMMDD/` 로 복사.
 - **로그**: Portainer Logs 또는 `samchun-live/data/server.log` (접속 IP 가 있으니 공개하지 않는다. 암호는 기록하지 않음).
 - **보안**: 게임 원래 프로토콜이라 암호화(TLS)가 없다. 다른 사이트와 같은 암호를 쓰지 말라고 안내한다.
-- NAS 공유 폴더에서 SQLite 파일 잠금이 안 되면 서버가 스스로 "process lock only" 로 바꿔 계속 돈다 (로그에 경고 1줄).
-  처음부터 그렇게 하려면 compose 의 environment 에 `SAMCHUN_SQLITE_NOLOCK: "1"`.
+- 서버 1.3.60 부터 SQLite 파일 잠금을 기본으로 끈다 (NAS 공유 폴더에서 잠금이 걸린 채 풀리지 않아
+  게임 결과 저장·재접속이 실패했음). 서버 프로세스 하나가 모든 DB 접근을 순서대로 처리하므로 안전하다.
+  DB 를 복사(백업)할 때는 컨테이너를 잠깐 멈춘다. 로컬 디스크에서 잠금을 켜려면 `SAMCHUN_SQLITE_LOCKING: "1"`.
+- DB 가 잠시 응답하지 않아도 접속은 유지되고(전적 조회는 기본값으로 응답), 그때 받은 경기 결과는 메모리에 두었다가 30초마다 다시 저장한다.

@@ -26,7 +26,7 @@ import time
 LOG = logging.getLogger('samchun')
 HEADER = struct.Struct('<IBH')
 MAX_PACKET = 1024
-SERVER_VERSION = '1.3.59'
+SERVER_VERSION = '1.3.60'
 
 # Ladder (same rule as the RhakMu lobby server / RTS ARENA site):
 # score = 1000 + 10*win - 10*loss, never below 0; order score desc, wins desc,
@@ -83,7 +83,13 @@ class Accounts:
     def __init__(self, path):
         self.path = str(path)
         self.lock = threading.RLock()
-        self.nolock = os.environ.get('SAMCHUN_SQLITE_NOLOCK') == '1'
+        # 1.3.60: SQLite file locking is OFF by default. This process is the only user of
+        # the file and serializes every access with self.lock; on the NAS share the file
+        # locks got stuck ("database is locked" on every write after a game, so results
+        # were lost and re-login timed out with "network error"). SAMCHUN_SQLITE_LOCKING=1
+        # turns file locking back on for local disks.
+        self.nolock = os.environ.get('SAMCHUN_SQLITE_LOCKING') != '1'
+        self.pending = []        # results that could not be written yet (retried in the background)
         self.rank_cache = None   # ranking() result until the next stored result/participant
         try:
             self.create()
@@ -105,9 +111,9 @@ class Accounts:
     def db(self):
         with self.lock:
             if self.nolock:
-                connection = sqlite3.connect(Path(self.path).resolve().as_uri()+'?nolock=1', uri=True, timeout=10)
+                connection = sqlite3.connect(Path(self.path).resolve().as_uri()+'?nolock=1', uri=True, timeout=2)
             else:
-                connection = sqlite3.connect(self.path, timeout=10)
+                connection = sqlite3.connect(self.path, timeout=2)
             try:
                 yield connection
             finally:
@@ -136,6 +142,28 @@ class Accounts:
     def record_result(self, match_id, uid, outcome):
         if not match_id or outcome not in (1, 2, 3, 4):
             return False
+        try:
+            return self.write_result(match_id, uid, outcome)
+        except sqlite3.Error as e:
+            # Never lose a finished game's result because the disk is busy: keep it and retry.
+            LOG.warning('result kept for retry (%s): match=%s user=%d outcome=%d', e, match_id, uid, outcome)
+            with self.lock:
+                self.pending.append((match_id, uid, outcome, int(time.time())))
+            return False
+    def retry_pending(self):
+        with self.lock:
+            todo, self.pending = self.pending, []
+        for match_id, uid, outcome, at in todo:
+            try:
+                with self.db() as db, db:
+                    if db.execute('INSERT OR IGNORE INTO match_results VALUES (?,?,?,?)', (match_id, uid, outcome, at)).rowcount:
+                        self.rank_cache = None
+                LOG.info('kept result stored: match=%s user=%d outcome=%d', match_id, uid, outcome)
+            except sqlite3.Error:
+                with self.lock:
+                    self.pending.append((match_id, uid, outcome, at))
+        return not self.pending
+    def write_result(self, match_id, uid, outcome):
         with self.db() as db, db:
             row = db.execute('INSERT OR IGNORE INTO match_results VALUES (?,?,?,?)',
                              (match_id, uid, outcome, int(time.time())))
@@ -412,7 +440,11 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             self.world.auth_attempts[key] = attempts
             if len(self.world.auth_attempts) > 2048:
                 self.world.auth_attempts = {k:v for k,v in self.world.auth_attempts.items() if v and now-v[-1] < 60}
-        result = self.world.accounts.authenticate(text(body, 0, 16), text(body, 16, 11), op == 0x30)
+        try:
+            result = self.world.accounts.authenticate(text(body, 0, 16), text(body, 16, 11), op == 0x30)
+        except sqlite3.Error as e:
+            LOG.warning('login database unavailable: %s', e)
+            result = None
         if not result:
             self.send(0x94, b'\x01' if op == 0x30 else b'\x00')
             return
@@ -533,6 +565,17 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             LOG.info('unimplemented request op=%02x size=%d', op, len(b)+7)
             self.send(0x93, bytes(4))
     def dispatch_db(self, op, b):
+        try:
+            self.dispatch_db_checked(op, b)
+        except sqlite3.Error as e:
+            # A busy/broken disk must never drop the player (1.3.59 disconnected them and the
+            # client then showed "network error"): answer with what the game can always use.
+            LOG.warning('database unavailable for op=%02x: %s', op, e)
+            if op == 2 and len(b) == 17:
+                self.send(0x7a, bytes(Accounts.native_record(None, text(b,1,16) or self.name)[:80]))
+            elif op in (3, 0x0a, 0x0b):
+                self.send(0x93, bytes(4))
+    def dispatch_db_checked(self, op, b):
         if op == 1 and len(b) == 683:
             # A result often arrives AFTER room-leave; retain the match ticket.
             if self.match_relay and text(b,1,16).casefold() == self.name.casefold():
@@ -676,11 +719,15 @@ class RelayHandler(socketserver.BaseRequestHandler):
                          max_gap, self.max_backlog)
     @staticmethod
     def store_participant(world, match):
-        try:
-            world.accounts.record_match(*match)
-            world.export()
-        except sqlite3.Error:
-            LOG.exception('match participant not stored')
+        for attempt in range(10):
+            try:
+                world.accounts.record_match(*match)
+                world.export()
+                return
+            except sqlite3.Error as e:
+                if attempt == 9:
+                    LOG.warning('match participant not stored: %s', e)
+                time.sleep(3)
     def send(self, frame):
         """Queue a frame for this receiver (never blocks the sending player)."""
         if self.dead:
@@ -793,6 +840,12 @@ def main():
     RelayHandler.NODELAY = not args.no_relay_nodelay
     world.export_path = args.data/'matches.json'
     world.export()
+    def maintenance():
+        while True:
+            time.sleep(30)
+            if world.accounts.pending and world.accounts.retry_pending():
+                world.export()
+    threading.Thread(target=maintenance, daemon=True).start()
     with LobbyServer((args.bind, args.port), world) as server, LobbyServer((args.bind, args.relay_port), world, RelayHandler) as relay:
         threading.Thread(target=relay.serve_forever, daemon=True).start()
         status = None
@@ -805,7 +858,7 @@ def main():
         LOG.info('3KD2 compatibility server listening on %s:%d', args.bind, args.port)
         LOG.info('Accounts are local to this server. Native protocol has no TLS; use a private LAN/VPN.')
         LOG.info('Native game relay listening on TCP %d', args.relay_port)
-        LOG.info('Server %s: in-game personal ranking, match history export (%s), relay nodelay=%s', SERVER_VERSION, world.export_path, RelayHandler.NODELAY)
+        LOG.info('Server %s: in-game personal ranking, match history export (%s), relay nodelay=%s, sqlite file locking=%s', SERVER_VERSION, world.export_path, RelayHandler.NODELAY, not world.accounts.nolock)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
