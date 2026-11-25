@@ -1,12 +1,12 @@
 """Execute original x86 account builders/response parsers against local server frames."""
 from pathlib import Path
-import struct, sys
+import os, struct, sys
 import pefile
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE
 from unicorn.x86_const import *
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'server'))
 from compat_server import packet
-GAME=Path(r'C:\Users\seo\Downloads\DGGL\Games\3KD2120g_Win\3kd2.exe')
+GAME=Path(os.environ.get('SAMCHUN_GAME_EXE',r'C:\Users\seo\Downloads\DGGL\Games\3KD2120g_Win\3kd2.exe'))
 
 def account_call(register=False,response=None):
     pe=pefile.PE(str(GAME));u=Uc(UC_ARCH_X86,UC_MODE_32)

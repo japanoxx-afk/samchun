@@ -13,7 +13,8 @@ from compat_server import World,LobbyServer,RelayHandler,read_exact,puttext,u32,
 from test_compat_server import Client
 
 def native_send(sender,destination,rid=100,host=True):
-    pe=pefile.PE(r'C:\Users\seo\Downloads\DGGL\Games\3KD2120g_Win\3kd2.exe')
+    from test_compat_native import GAME
+    pe=pefile.PE(str(GAME))
     u=Uc(UC_ARCH_X86,UC_MODE_32);u.mem_map(0x400000,0x800000);u.mem_write(0x400000,pe.get_memory_mapped_image())
     def put(a,v):u.mem_write(a,struct.pack('<I',v))
     put(0xb20000+0x9d,1 if host else 2)

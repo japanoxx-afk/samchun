@@ -1,0 +1,56 @@
+# 삼국지천명2 인터넷 호환 서버(더미 서버) — Portainer 스택 설정
+#
+# 라크무 서버·RTS ARENA 와 같은 방식: 이미지 빌드 없음.
+#   공개 이미지 python:3.12-slim 이 NAS 볼륨의 server/compat_server.py 를 그대로 실행한다 (표준 라이브러리만 사용).
+#   코드:   game-servers/samchun-live/app/compat_server.py
+#   데이터: game-servers/samchun-live/data/   (accounts.sqlite3 = 계정·전적, matches.json = 전적 사이트용, server.log)
+#   → 코드 업데이트 = File Station 에서 app/compat_server.py 교체 + 컨테이너 재시작.
+#
+# 포트 (게임이 번호를 고정해서 쓴다 — 다른 번호로 바꿀 수 없다):
+#   TCP 4800  로그인·대기실
+#   TCP 4901  게임 중계
+#   TCP 4902  전적·랭킹 JSON (RTS ARENA 가 읽음. 공유기에 열 필요 없음)
+#
+# network_mode: host 를 쓰는 이유: 서버가 접속자 실제 IP 로 로그인 시도 제한(1분 12회)과
+# 대기실↔중계 연결 확인을 한다. 포트 매핑(ports:)으로 하면 모든 접속자가 도커 게이트웨이 IP 하나로 보여
+# 한 사람이 로그인을 여러 번 틀리면 모두가 1분간 막힐 수 있다.
+
+name: samchun
+
+services:
+  samchun-server:
+    image: python:3.12-slim
+    container_name: samchun-server
+    restart: unless-stopped
+    network_mode: host
+    working_dir: /mnt/game-servers/samchun-live/app
+    command: ["python", "-u", "compat_server.py",
+              "--bind", "0.0.0.0", "--port", "4800", "--relay-port", "4901", "--http-port", "4902",
+              "--data", "/mnt/game-servers/samchun-live/data"]
+    environment:
+      TZ: Asia/Seoul                  # 전적 시각을 한국 시간으로 기록
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      # rakmu-live / rtsarena 스택과 같은 외부 볼륨 (File Station 의 game-servers 공유 폴더)
+      - game_servers_data:/mnt/game-servers
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 256                   # 접속 1명 = 스레드 2개 정도 (동시 접속 64명 제한)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4902/healthz', timeout=5).status == 200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  game_servers_data:
+    external: true

@@ -3,7 +3,10 @@ Wire layouts are derived from the original client's packet builders/consumers.
 No original service, credentials or game files are contacted/distributed.
 """
 import argparse
-from contextlib import closing
+from contextlib import contextmanager
+import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import hashlib
 import hmac
 import logging
@@ -22,6 +25,17 @@ import time
 LOG = logging.getLogger('samchun')
 HEADER = struct.Struct('<IBH')
 MAX_PACKET = 1024
+SERVER_VERSION = '1.3.58'
+
+# Ladder (same rule as the RhakMu lobby server / RTS ARENA site):
+# score = 1000 + 10*win - 10*loss, never below 0; order score desc, wins desc,
+# losses asc, name. Outcome 4 (native "too short / no contest") never counts.
+POINTS_BASE, POINTS_WIN, POINTS_LOSE = 1000, 10, 10
+# Native ranking page (4b9770) asks for 7 ranks; a 0x78 reply holds at most
+# (1024-7-8)//101 = 9 personal records.
+RANK_RECORD = 101
+RANK_PAGE_MAX = (MAX_PACKET - 7 - 8) // RANK_RECORD
+OUTCOME_CODES = {1: 'win', 2: 'lose', 3: 'draw'}
 
 def transport_id(account_id):
     # Native 42ACA0 treats 0 as broadcast and 1 as the room-host alias.
@@ -59,47 +73,165 @@ def read_exact(stream, length):
     return bytes(data)
 
 class Accounts:
+    """Account/result store. One process owns the file; every access is serialized
+    by a process lock so the database also works on network volumes (NAS/VM
+    shares) whose file locking is unreliable ("database is locked")."""
     def __init__(self, path):
         self.path = str(path)
-        with closing(sqlite3.connect(self.path)) as db, db:
+        self.lock = threading.RLock()
+        self.nolock = os.environ.get('SAMCHUN_SQLITE_NOLOCK') == '1'
+        try:
+            self.create()
+        except sqlite3.OperationalError as e:
+            if self.nolock or 'locked' not in str(e):
+                raise
+            LOG.warning('database file locking unavailable (%s); using process lock only', e)
+            self.nolock = True
+            self.create()
+    def create(self):
+        with self.db() as db, db:
             db.execute('CREATE TABLE IF NOT EXISTS match_results (match_id TEXT NOT NULL, user_id INTEGER NOT NULL, outcome INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY(match_id,user_id))')
             db.execute('CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE, salt BLOB NOT NULL, digest BLOB NOT NULL)')
+            # 1.3.58: match metadata for the ranking site (RTS ARENA). Results
+            # recorded before this version have no row here and still count.
+            db.execute('CREATE TABLE IF NOT EXISTS matches (match_id TEXT PRIMARY KEY, room_id INTEGER, title TEXT, map TEXT, started_at INTEGER NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS match_players (match_id TEXT NOT NULL, user_id INTEGER NOT NULL, joined_at INTEGER NOT NULL, PRIMARY KEY(match_id,user_id))')
+    @contextmanager
+    def db(self):
+        with self.lock:
+            if self.nolock:
+                connection = sqlite3.connect(Path(self.path).resolve().as_uri()+'?nolock=1', uri=True, timeout=10)
+            else:
+                connection = sqlite3.connect(self.path, timeout=10)
+            try:
+                yield connection
+            finally:
+                connection.close()
     def authenticate(self, name, password, register=False):
         if not 1 <= len(name.encode('cp949', 'replace')) <= 15 or len(password.encode('cp949', 'replace')) > 10:
             return None
-        with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
-            if register:
-                salt = secrets.token_bytes(24)
-                digest = hashlib.pbkdf2_hmac('sha256', password.encode('cp949'), salt, 600000)
+        if register:
+            salt = secrets.token_bytes(24)
+            digest = hashlib.pbkdf2_hmac('sha256', password.encode('cp949'), salt, 600000)
+            with self.db() as db, db:
                 try:
                     row = db.execute('INSERT INTO accounts(name,salt,digest) VALUES (?,?,?)', (name, salt, digest))
                     return row.lastrowid, name
                 except sqlite3.IntegrityError:
                     return None
+        with self.db() as db:
             row = db.execute('SELECT id,name,salt,digest FROM accounts WHERE name=?', (name,)).fetchone()
-            salt = row[2] if row else bytes(24)
-            digest = hashlib.pbkdf2_hmac('sha256', password.encode('cp949'), salt, 600000)
-            if row and hmac.compare_digest(row[3], digest):
-                return row[0], row[1]
-            return None
+        # Key stretching runs outside the database lock (and also for unknown names).
+        salt = row[2] if row else bytes(24)
+        digest = hashlib.pbkdf2_hmac('sha256', password.encode('cp949'), salt, 600000)
+        if row and hmac.compare_digest(row[3], digest):
+            return row[0], row[1]
+        return None
 
     def record_result(self, match_id, uid, outcome):
         if not match_id or outcome not in (1, 2, 3, 4):
             return False
-        with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
+        with self.db() as db, db:
             row = db.execute('INSERT OR IGNORE INTO match_results VALUES (?,?,?,?)',
                              (match_id, uid, outcome, int(time.time())))
             return row.rowcount == 1
+    def record_match(self, match_id, room_id, title, map_name, user_id):
+        """Remember that an account entered the native game transport of a match."""
+        now = int(time.time())
+        with self.db() as db, db:
+            db.execute('INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?)', (match_id, room_id, title, map_name, now))
+            db.execute('INSERT OR IGNORE INTO match_players VALUES (?,?,?)', (match_id, user_id, now))
+
+    # A result counts when its match had two or more accounts in the game
+    # transport (no single-player games), or when it predates match tracking.
+    COUNTED = ('r.outcome IN (1,2,3) AND (NOT EXISTS (SELECT 1 FROM matches m WHERE m.match_id=r.match_id)'
+               ' OR (SELECT COUNT(*) FROM match_players p WHERE p.match_id=r.match_id) >= 2)')
+
+    def ranking(self):
+        """Every account with a counted result, best first. Rank starts at 1."""
+        with self.db() as db:
+            rows = db.execute(
+                'SELECT a.name, SUM(r.outcome=1), SUM(r.outcome=2), SUM(r.outcome=3), MAX(r.recorded_at)'
+                ' FROM match_results r JOIN accounts a ON a.id=r.user_id WHERE ' + self.COUNTED +
+                ' GROUP BY a.id').fetchall()
+        out = []
+        for name, w, l, d, last in rows:
+            out.append({'name': name, 'win': w, 'lose': l, 'draw': d, 'games': w + l + d, 'last': last,
+                        'score': max(0, POINTS_BASE + POINTS_WIN * w - POINTS_LOSE * l)})
+        out.sort(key=lambda r: (-r['score'], -r['win'], r['lose'], r['name']))
+        for i, r in enumerate(out, 1):
+            r['rank'] = i
+        return out
+
+    def player(self, name):
+        """(ranking row or None, account name or None) for a case-insensitive name."""
+        with self.db() as db:
+            row = db.execute('SELECT name FROM accounts WHERE name=?', (name,)).fetchone()
+        if not row:
+            return None, None
+        return next((r for r in self.ranking() if r['name'] == row[0]), None), row[0]
+
+    @staticmethod
+    def native_record(row, name=''):
+        """101-byte personal ranking record (native 4b9770 / 4f7cc9 layout).
+
+        0 name[16] · 16 guild text (unused) · 57 win · 59 lose · 61 draw ·
+        63 games · 65 score · 67 Tr · 69 HF (u16) · 71 rank (u32) · 75 u32.
+        The 0x7a statistics reply is the first 80 bytes of the same record.
+        """
+        b = bytearray(RANK_RECORD)
+        puttext(b, 0, 16, row['name'] if row else name)
+        if row:
+            for offset, key in ((57, 'win'), (59, 'lose'), (61, 'draw'), (63, 'games'), (65, 'score')):
+                struct.pack_into('<H', b, offset, min(row[key], 65535))
+            put32(b, 71, row['rank'])
+        else:
+            struct.pack_into('<H', b, 65, POINTS_BASE)
+        return b
+
     def statistics(self, name):
-        with closing(sqlite3.connect(self.path, timeout=10)) as db:
-            rows = db.execute('SELECT outcome,COUNT(*) FROM match_results WHERE user_id=(SELECT id FROM accounts WHERE name=?) GROUP BY outcome', (name,)).fetchall()
-        counts = dict(rows)
-        result = bytearray(80)
-        # Original 4f7c40 reads these unsigned 16-bit counters from 0x7a.
-        values = [counts.get(1,0), counts.get(2,0), counts.get(3,0)]
-        for offset, value in zip((57,59,61,63), values+[sum(values)]):
-            struct.pack_into('<H', result, offset, min(value, 65535))
-        return result
+        row, account = self.player(name)
+        return bytes(self.native_record(row, account or name)[:80])
+
+    def ranking_page(self, first, last):
+        """(first, last, records) clamped to existing ranks, or None when nobody is ranked."""
+        rows = self.ranking()
+        if not rows:
+            return None
+        first = max(1, first)
+        if first > len(rows):  # paging past the end shows the last page
+            first = max(1, len(rows) - 6)
+        last = min(max(first, last), len(rows), first + RANK_PAGE_MAX - 1)
+        return first, last, [self.native_record(r) for r in rows[first-1:last]]
+
+    def export_matches(self):
+        """Lobby match history in the RhakMu matches.json shape used by RTS ARENA."""
+        with self.db() as db:
+            matches = db.execute('SELECT match_id, room_id, title, map, started_at FROM matches ORDER BY started_at, rowid').fetchall()
+            players = db.execute('SELECT p.match_id, a.name FROM match_players p JOIN accounts a ON a.id=p.user_id ORDER BY p.joined_at, a.name').fetchall()
+            results = db.execute('SELECT r.match_id, a.name, r.outcome, r.recorded_at FROM match_results r JOIN accounts a ON a.id=r.user_id').fetchall()
+        names, outcome = {}, {}
+        for mid, name in players:
+            names.setdefault(mid, []).append(name)
+        for mid, name, code, at in results:
+            if code in OUTCOME_CODES:
+                outcome.setdefault(mid, {})[name] = {'code': code, 'at': local_time(at)}
+        out = []
+        for mid, rid, title, map_name, started in matches:
+            out.append({'id': mid, 'time': local_time(started), 'room': title or '', 'map': map_name or '',
+                        'players': names.get(mid, []), 'results': outcome.get(mid, {})})
+        return out
+
+def local_time(epoch):
+    return datetime.datetime.fromtimestamp(epoch).strftime('%Y-%m-%d %H:%M:%S')
+
+def room_map(record):
+    """Best-effort map file name inside an opaque 207-byte native room record."""
+    for chunk in bytes(record[36:]).split(b'\0'):
+        name = chunk.decode('cp949', 'replace').strip()
+        if name.lower().endswith('.map') and 4 < len(name) < 64 and name.isprintable():
+            return name.replace('\\', '/').rsplit('/', 1)[-1][:-4]
+    return ''
 
 class World:
     def __init__(self, database):
@@ -112,6 +244,19 @@ class World:
         self.next_channel = 2
         self.auth_attempts = {}
         self.relays = {}
+        self.export_path = None  # matches.json for the ranking site (optional)
+        self.export_lock = threading.Lock()
+    def export(self):
+        if not self.export_path:
+            return
+        try:
+            with self.export_lock:
+                data = json.dumps(self.accounts.export_matches(), ensure_ascii=False, indent=1)
+                temp = self.export_path.with_name(self.export_path.name+'.tmp')
+                temp.write_text(data, encoding='utf-8')
+                os.replace(temp, self.export_path)
+        except (OSError, sqlite3.Error):
+            LOG.exception('matches.json export failed')
     @staticmethod
     def channel_record(cid, name):
         b = bytearray(119)
@@ -253,6 +398,8 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             if self.match_relay and text(b,1,16).casefold() == self.name.casefold():
                 stored = self.world.accounts.record_result(self.match_id, self.account_id, b[0])
                 LOG.info('match result user=%d outcome=%d stored=%s', self.uid, b[0], stored)
+                if stored:
+                    threading.Thread(target=self.world.export, daemon=True).start()
             # Native result sender is fire-and-forget; do not enqueue a reply.
         elif op == 2 and len(b) == 17:
             name = text(b,1,16) or self.name
@@ -297,8 +444,18 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             self.send(0x82, b'\x01'+self.record)
         elif op == 0x1f:
             self.send(0x82, b'\x01'+self.record)
-        elif op in (3, 0x0a, 0x0b, 0x2d, 0x2e, 0x2f):
-            # Empty search/ranking result, never fabricate account rankings.
+        elif op in (3, 0x0a, 0x0b) and len(b) == 8:
+            # Personal ranking page (native 4f7eb0): first/last rank inclusive.
+            # The three tabs share one ladder: results carry no ladder kind.
+            page = self.world.accounts.ranking_page(u32(b, 0), u32(b, 4))
+            if page is None:
+                self.send(0x93, bytes(4))
+            else:
+                first, last, records = page
+                self.send(0x78, struct.pack('<II', first, last)+b''.join(records))
+        elif op in (0x2d, 0x2e, 0x2f, 0x31, 5):
+            # Guild ranking/search/lookup: guilds are not implemented. 0x93 is
+            # the native "no rows" reply (4f7fa0 sets count 0, 4f7df0 fails).
             self.send(0x93, bytes(4))
         elif op == 7 and 30 <= len(b) <= 230:
             now = time.monotonic()
@@ -387,6 +544,12 @@ class RelayHandler(socketserver.BaseRequestHandler):
                 owner.match_relay = True
                 self.uid, self.rid = uid, rid
                 world.relays[rid, uid] = self
+                match = (room['match_id'], rid, text(room['record'], 4, 32), room_map(room['record']), owner.account_id)
+            try:
+                world.accounts.record_match(*match)
+                threading.Thread(target=world.export, daemon=True).start()
+            except sqlite3.Error:
+                LOG.exception('match participant not stored')
             self.send(struct.pack('<IIIII', 1, 0x1f6, 20, 0x130, 0xbe0e33ce))
             self.request.settimeout(None)
             self.request.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -455,28 +618,71 @@ class LobbyServer(socketserver.ThreadingTCPServer):
         finally:
             self.slots.release()
 
+class StatusHandler(BaseHTTPRequestHandler):
+    """Read-only JSON for the RTS ARENA site and health checks (no account data beyond names)."""
+    server_version = 'SamchunStatus/'+SERVER_VERSION
+    def log_message(self, fmt, *args):
+        pass
+    def do_GET(self):
+        world = self.server.world
+        path = self.path.split('?', 1)[0]
+        try:
+            if path == '/healthz':
+                with world.lock:
+                    online = sum(1 for c in world.clients if c.uid)
+                    rooms = len(world.rooms)
+                body = {'ok': True, 'version': SERVER_VERSION, 'online': online, 'rooms': rooms}
+            elif path == '/matches.json':
+                body = world.accounts.export_matches()
+            elif path == '/ranking.json':
+                body = world.accounts.ranking()
+            else:
+                return self.reply(404, {'error': 'not found'})
+        except sqlite3.Error as e:
+            return self.reply(503, {'ok': False, 'error': str(e)})
+        self.reply(200, body)
+    def reply(self, code, obj):
+        data = json.dumps(obj, ensure_ascii=False).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--bind', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=4800)
     parser.add_argument('--relay-port', type=int, default=4901)
+    parser.add_argument('--http-port', type=int, default=0, help='JSON status/ranking port for RTS ARENA (0 = off)')
     parser.add_argument('--data', type=Path, default=Path(os.environ.get('LOCALAPPDATA', '.'))/'SamchunServer')
     args = parser.parse_args()
     args.data.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', handlers=[logging.StreamHandler(), RotatingFileHandler(args.data/'server.log', maxBytes=2*1024*1024, backupCount=3, encoding='utf-8')])
     world = World(args.data/'accounts.sqlite3')
+    world.export_path = args.data/'matches.json'
+    world.export()
     with LobbyServer((args.bind, args.port), world) as server, LobbyServer((args.bind, args.relay_port), world, RelayHandler) as relay:
         threading.Thread(target=relay.serve_forever, daemon=True).start()
+        status = None
+        if args.http_port:
+            status = ThreadingHTTPServer((args.bind, args.http_port), StatusHandler)
+            status.daemon_threads = True
+            status.world = world
+            threading.Thread(target=status.serve_forever, daemon=True).start()
+            LOG.info('Status/ranking JSON on http://%s:%d/ (healthz, matches.json, ranking.json)', args.bind, args.http_port)
         LOG.info('3KD2 compatibility server listening on %s:%d', args.bind, args.port)
         LOG.info('Accounts are local to this server. Native protocol has no TLS; use a private LAN/VPN.')
         LOG.info('Native game relay listening on TCP %d', args.relay_port)
-        LOG.info('Server 1.3.45: native peer IDs reserve 0/1; account and statistics IDs unchanged')
+        LOG.info('Server %s: in-game personal ranking, match history export (%s)', SERVER_VERSION, world.export_path)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
             pass
         finally:
             relay.shutdown()
+            if status:
+                status.shutdown()
 
 if __name__ == '__main__':
     main()

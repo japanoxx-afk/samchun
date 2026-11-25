@@ -17,3 +17,4 @@ README-1.*.txt
 *.sqlite3-*
 *.log
 /server-data/
+/deploy/upload/
