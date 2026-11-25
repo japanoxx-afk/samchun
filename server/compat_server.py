@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import queue
 import hashlib
 import hmac
 import logging
@@ -25,7 +26,7 @@ import time
 LOG = logging.getLogger('samchun')
 HEADER = struct.Struct('<IBH')
 MAX_PACKET = 1024
-SERVER_VERSION = '1.3.58'
+SERVER_VERSION = '1.3.59'
 
 # Ladder (same rule as the RhakMu lobby server / RTS ARENA site):
 # score = 1000 + 10*win - 10*loss, never below 0; order score desc, wins desc,
@@ -36,6 +37,9 @@ POINTS_BASE, POINTS_WIN, POINTS_LOSE = 1000, 10, 10
 RANK_RECORD = 101
 RANK_PAGE_MAX = (MAX_PACKET - 7 - 8) // RANK_RECORD
 OUTCOME_CODES = {1: 'win', 2: 'lose', 3: 'draw'}
+OUTCOME_NAMES = {1: 'win', 2: 'lose', 3: 'draw', 4: 'no-contest(short game or abort, not counted)'}
+DB_OPS = (1, 2, 3, 0x0a, 0x0b)
+RELAY_BACKLOG_LIMIT = 8*1024*1024   # bytes queued for one slow receiver before it is dropped
 
 def transport_id(account_id):
     # Native 42ACA0 treats 0 as broadcast and 1 as the room-host alias.
@@ -80,6 +84,7 @@ class Accounts:
         self.path = str(path)
         self.lock = threading.RLock()
         self.nolock = os.environ.get('SAMCHUN_SQLITE_NOLOCK') == '1'
+        self.rank_cache = None   # ranking() result until the next stored result/participant
         try:
             self.create()
         except sqlite3.OperationalError as e:
@@ -134,13 +139,30 @@ class Accounts:
         with self.db() as db, db:
             row = db.execute('INSERT OR IGNORE INTO match_results VALUES (?,?,?,?)',
                              (match_id, uid, outcome, int(time.time())))
+            if row.rowcount == 1:
+                self.rank_cache = None
             return row.rowcount == 1
+    def forfeit(self, match_id, winner):
+        """1:1 match: the opponent of a reported win who left without any result loses.
+        Returns the opponent's account name when a loss was recorded."""
+        with self.db() as db, db:
+            ids = [r[0] for r in db.execute('SELECT user_id FROM match_players WHERE match_id=?', (match_id,))]
+            if len(ids) != 2 or winner not in ids:
+                return None
+            other = ids[0] if ids[1] == winner else ids[1]
+            row = db.execute('INSERT OR IGNORE INTO match_results VALUES (?,?,?,?)', (match_id, other, 2, int(time.time())))
+            if row.rowcount != 1:
+                return None
+            self.rank_cache = None
+            name = db.execute('SELECT name FROM accounts WHERE id=?', (other,)).fetchone()
+            return name[0] if name else str(other)
     def record_match(self, match_id, room_id, title, map_name, user_id):
         """Remember that an account entered the native game transport of a match."""
         now = int(time.time())
         with self.db() as db, db:
             db.execute('INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?)', (match_id, room_id, title, map_name, now))
             db.execute('INSERT OR IGNORE INTO match_players VALUES (?,?,?)', (match_id, user_id, now))
+            self.rank_cache = None
 
     # A result counts when its match had two or more accounts in the game
     # transport (no single-player games), or when it predates match tracking.
@@ -149,6 +171,9 @@ class Accounts:
 
     def ranking(self):
         """Every account with a counted result, best first. Rank starts at 1."""
+        cached = self.rank_cache
+        if cached is not None:
+            return cached
         with self.db() as db:
             rows = db.execute(
                 'SELECT a.name, SUM(r.outcome=1), SUM(r.outcome=2), SUM(r.outcome=3), MAX(r.recorded_at)'
@@ -161,6 +186,7 @@ class Accounts:
         out.sort(key=lambda r: (-r['score'], -r['win'], r['lose'], r['name']))
         for i, r in enumerate(out, 1):
             r['rank'] = i
+        self.rank_cache = out
         return out
 
     def player(self, name):
@@ -246,6 +272,20 @@ class World:
         self.relays = {}
         self.export_path = None  # matches.json for the ranking site (optional)
         self.export_lock = threading.Lock()
+    def forfeit_leavers(self, match_id, winner_account):
+        """A 1:1 winner reported; the opponent who dropped out without a result gets a loss
+        (otherwise leaving a lost game would erase the loss). Skipped while the opponent is
+        still in the game transport: their own result will arrive."""
+        with self.lock:
+            if any(r.match_id == match_id and r.account_id != winner_account for r in self.relays.values()):
+                return
+        try:
+            name = self.accounts.forfeit(match_id, winner_account)
+        except sqlite3.Error:
+            LOG.exception('forfeit not stored')
+            return
+        if name:
+            LOG.info('forfeit loss recorded for %s (left 1:1 match without a result)', name)
     def export(self):
         if not self.export_path:
             return
@@ -342,6 +382,11 @@ class LobbyHandler(socketserver.BaseRequestHandler):
                 LOG.info('request op=%02x size=%d authenticated=%s', op, size, bool(self.uid))
                 if op in (0x0c, 0x30):
                     self.login(op, body)
+                elif op in DB_OPS and self.uid:
+                    # Database work (results, statistics, ranking) never holds the
+                    # world lock: game relay forwarding takes that lock per frame,
+                    # so a slow disk (NAS share) must not stall running matches.
+                    self.dispatch_db(op, body)
                 else:
                     with self.world.lock:
                         self.dispatch(op, body)
@@ -393,17 +438,6 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             return
         if op == 0x0d:  # lobby entered after authentication
             self.world.users(self)
-        elif op == 1 and len(b) == 683:
-            # A result often arrives AFTER room-leave; retain the match ticket.
-            if self.match_relay and text(b,1,16).casefold() == self.name.casefold():
-                stored = self.world.accounts.record_result(self.match_id, self.account_id, b[0])
-                LOG.info('match result user=%d outcome=%d stored=%s', self.uid, b[0], stored)
-                if stored:
-                    threading.Thread(target=self.world.export, daemon=True).start()
-            # Native result sender is fire-and-forget; do not enqueue a reply.
-        elif op == 2 and len(b) == 17:
-            name = text(b,1,16) or self.name
-            self.send(0x7a, self.world.accounts.statistics(name))
         elif op == 0x10:
             self.world.room_list(self)
         elif op == 0x21:
@@ -444,15 +478,6 @@ class LobbyHandler(socketserver.BaseRequestHandler):
             self.send(0x82, b'\x01'+self.record)
         elif op == 0x1f:
             self.send(0x82, b'\x01'+self.record)
-        elif op in (3, 0x0a, 0x0b) and len(b) == 8:
-            # Personal ranking page (native 4f7eb0): first/last rank inclusive.
-            # The three tabs share one ladder: results carry no ladder kind.
-            page = self.world.accounts.ranking_page(u32(b, 0), u32(b, 4))
-            if page is None:
-                self.send(0x93, bytes(4))
-            else:
-                first, last, records = page
-                self.send(0x78, struct.pack('<II', first, last)+b''.join(records))
         elif op in (0x2d, 0x2e, 0x2f, 0x31, 5):
             # Guild ranking/search/lookup: guilds are not implemented. 0x93 is
             # the native "no rows" reply (4f7fa0 sets count 0, 4f7df0 fails).
@@ -507,6 +532,32 @@ class LobbyHandler(socketserver.BaseRequestHandler):
         else:
             LOG.info('unimplemented request op=%02x size=%d', op, len(b)+7)
             self.send(0x93, bytes(4))
+    def dispatch_db(self, op, b):
+        if op == 1 and len(b) == 683:
+            # A result often arrives AFTER room-leave; retain the match ticket.
+            if self.match_relay and text(b,1,16).casefold() == self.name.casefold():
+                stored = self.world.accounts.record_result(self.match_id, self.account_id, b[0])
+                LOG.info('match result user=%d outcome=%d %s stored=%s', self.uid, b[0], OUTCOME_NAMES.get(b[0], '?'), stored)
+                if stored and b[0] == 1:
+                    self.world.forfeit_leavers(self.match_id, self.account_id)
+                if stored:
+                    threading.Thread(target=self.world.export, daemon=True).start()
+            # Native result sender is fire-and-forget; do not enqueue a reply.
+        elif op == 2 and len(b) == 17:
+            name = text(b,1,16) or self.name
+            self.send(0x7a, self.world.accounts.statistics(name))
+        elif op in (3, 0x0a, 0x0b) and len(b) == 8:
+            # Personal ranking page (native 4f7eb0): first/last rank inclusive.
+            # The three tabs share one ladder: results carry no ladder kind.
+            page = self.world.accounts.ranking_page(u32(b, 0), u32(b, 4))
+            if page is None:
+                self.send(0x93, bytes(4))
+            else:
+                first, last, records = page
+                self.send(0x78, struct.pack('<II', first, last)+b''.join(records))
+        else:
+            LOG.info('unimplemented request op=%02x size=%d', op, len(b)+7)
+            self.send(0x93, bytes(4))
     def send_room(self, rid):
         room = self.world.rooms[rid]
         self.match_id = room['match_id']
@@ -521,13 +572,33 @@ class LobbyHandler(socketserver.BaseRequestHandler):
         self.send(0x7e, body)
 
 class RelayHandler(socketserver.BaseRequestHandler):
-    """Native Internet game transport (TCP 4901), isolated by lobby membership."""
+    """Native Internet game transport (TCP 4901), isolated by lobby membership.
+
+    1.3.59 latency work: TCP_NODELAY on the server side of every relay socket (small
+    lockstep frames are sent at once instead of waiting for the previous ACK, which
+    with Windows delayed ACK cost up to ~200 ms per frame), one writer thread per
+    receiver so a slow player never blocks the sender's reads, and a summary line per
+    connection (frames, largest gap, send backlog) to diagnose lag afterwards.
+    """
+    NODELAY = True
     def handle(self):
         world = self.server.world
-        self.lock = threading.Lock()
         self.uid = self.rid = 0
+        self.match_id = None
+        self.account_id = 0
+        self.outbox = queue.Queue()
+        self.backlog = 0
+        self.max_backlog = 0
+        self.backlog_lock = threading.Lock()
+        self.dead = False
         self.request.settimeout(60)
+        started = time.monotonic()
+        frames_in = bytes_in = frames_out = 0
+        max_gap = 0.0
+        writer = None
         try:
+            if self.NODELAY:
+                self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             raw = read_exact(self.request, 12)
             version, op, size = struct.unpack('<III', raw)
             if (version, op, size) != (1, 0x130, 36):
@@ -543,57 +614,115 @@ class RelayHandler(socketserver.BaseRequestHandler):
                     return
                 owner.match_relay = True
                 self.uid, self.rid = uid, rid
+                self.match_id, self.account_id = room['match_id'], owner.account_id
                 world.relays[rid, uid] = self
                 match = (room['match_id'], rid, text(room['record'], 4, 32), room_map(room['record']), owner.account_id)
-            try:
-                world.accounts.record_match(*match)
-                threading.Thread(target=world.export, daemon=True).start()
-            except sqlite3.Error:
-                LOG.exception('match participant not stored')
+            # Database write in the background: the game waits for the 0x1f6 reply below.
+            threading.Thread(target=self.store_participant, args=(world, match), daemon=True).start()
+            writer = threading.Thread(target=self.write_loop, daemon=True)
+            writer.start()
             self.send(struct.pack('<IIIII', 1, 0x1f6, 20, 0x130, 0xbe0e33ce))
             self.request.settimeout(None)
             self.request.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            LOG.info('relay connected room=%d user=%d', rid, uid)
-            frame_count = 0
+            LOG.info('relay connected room=%d user=%d nodelay=%s', rid, uid, self.NODELAY)
+            last = time.monotonic()
             while True:
                 raw = read_exact(self.request, 12)
                 version, op, size = struct.unpack('<III', raw)
                 if version != 1 or not 12 <= size <= 0x840:
+                    LOG.info('relay closed room=%d user=%d: invalid frame version=%d size=%d', self.rid, self.uid, version, size)
                     return
                 raw += read_exact(self.request, size-12)
+                now = time.monotonic()
+                max_gap = max(max_gap, now-last)
+                last = now
                 if op == 0x131:
                     return
                 if op == 0x1f5 and size >= 28:
+                    frames_in += 1
+                    bytes_in += size
                     with world.lock:
                         room = world.rooms.get(self.rid)
                         if not room or self.uid not in room['members']:
+                            LOG.info('relay closed room=%d user=%d: room gone or member left', self.rid, self.uid)
                             return
                         # Sender identity is authoritative, never copied from another client.
                         frame = bytearray(raw)
                         put32(frame, 12, self.rid)
                         put32(frame, 16, self.uid)
                         destination = u32(frame, 24)
-                        frame_count += 1
-                        if frame_count <= 8:
+                        if frames_in <= 8:
                             LOG.info('relay frame room=%d user=%d destination=%d size=%d', self.rid, self.uid, destination, size)
                         peers = [r for (group, user), r in world.relays.items()
                                  if group == self.rid and user != self.uid
                                  and (destination in (0, 0xffffffff) or destination == user)]
+                    frame = bytes(frame)
                     for peer in peers:
                         peer.send(frame)
-        except (OSError, EOFError, ValueError, struct.error):
-            pass
+                        frames_out += 1
+        except (OSError, EOFError, ValueError, struct.error) as e:
+            if self.uid:
+                LOG.info('relay closed room=%d user=%d: %s', self.rid, self.uid, type(e).__name__)
         finally:
             with world.lock:
                 if world.relays.get((self.rid, self.uid)) is self:
                     world.relays.pop((self.rid, self.uid), None)
-            LOG.info('relay disconnected room=%d user=%d', self.rid, self.uid)
-    def send(self, frame):
+            self.dead = True
+            self.outbox.put(None)
+            if self.uid:
+                LOG.info('relay disconnected room=%d user=%d after %.0fs: in %d frames/%d bytes, forwarded %d, '
+                         'largest gap %.1fs, largest send backlog %d bytes',
+                         self.rid, self.uid, time.monotonic()-started, frames_in, bytes_in, frames_out,
+                         max_gap, self.max_backlog)
+    @staticmethod
+    def store_participant(world, match):
         try:
-            with self.lock:
-                self.request.sendall(frame)
-        except OSError:
-            pass
+            world.accounts.record_match(*match)
+            world.export()
+        except sqlite3.Error:
+            LOG.exception('match participant not stored')
+    def send(self, frame):
+        """Queue a frame for this receiver (never blocks the sending player)."""
+        if self.dead:
+            return
+        with self.backlog_lock:
+            self.backlog += len(frame)
+            self.max_backlog = max(self.max_backlog, self.backlog)
+            backlog = self.backlog
+        if backlog > RELAY_BACKLOG_LIMIT:
+            LOG.warning('relay room=%d user=%d cannot keep up (%d bytes queued); closing', self.rid, self.uid, backlog)
+            self.dead = True
+            try:
+                self.request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            return
+        self.outbox.put(frame)
+    def write_loop(self):
+        while True:
+            frame = self.outbox.get()
+            if frame is None:
+                return
+            # Coalesce what is already queued into one send (fewer syscalls, same order).
+            chunks = [frame]
+            while True:
+                try:
+                    more = self.outbox.get_nowait()
+                except queue.Empty:
+                    break
+                if more is None:
+                    self.outbox.put(None)
+                    break
+                chunks.append(more)
+            data = b''.join(chunks)
+            try:
+                self.request.sendall(data)
+            except OSError:
+                self.dead = True
+                return
+            finally:
+                with self.backlog_lock:
+                    self.backlog -= len(data)
 
 class LobbyServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
@@ -655,11 +784,13 @@ def main():
     parser.add_argument('--port', type=int, default=4800)
     parser.add_argument('--relay-port', type=int, default=4901)
     parser.add_argument('--http-port', type=int, default=0, help='JSON status/ranking port for RTS ARENA (0 = off)')
+    parser.add_argument('--no-relay-nodelay', action='store_true', help='keep Nagle on relay sockets (pre-1.3.59 behaviour)')
     parser.add_argument('--data', type=Path, default=Path(os.environ.get('LOCALAPPDATA', '.'))/'SamchunServer')
     args = parser.parse_args()
     args.data.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', handlers=[logging.StreamHandler(), RotatingFileHandler(args.data/'server.log', maxBytes=2*1024*1024, backupCount=3, encoding='utf-8')])
     world = World(args.data/'accounts.sqlite3')
+    RelayHandler.NODELAY = not args.no_relay_nodelay
     world.export_path = args.data/'matches.json'
     world.export()
     with LobbyServer((args.bind, args.port), world) as server, LobbyServer((args.bind, args.relay_port), world, RelayHandler) as relay:
@@ -674,7 +805,7 @@ def main():
         LOG.info('3KD2 compatibility server listening on %s:%d', args.bind, args.port)
         LOG.info('Accounts are local to this server. Native protocol has no TLS; use a private LAN/VPN.')
         LOG.info('Native game relay listening on TCP %d', args.relay_port)
-        LOG.info('Server %s: in-game personal ranking, match history export (%s)', SERVER_VERSION, world.export_path)
+        LOG.info('Server %s: in-game personal ranking, match history export (%s), relay nodelay=%s', SERVER_VERSION, world.export_path, RelayHandler.NODELAY)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

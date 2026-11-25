@@ -225,6 +225,18 @@ Python 및 PyInstaller 배포 고지는 licenses/에 포함합니다.
   `--http-port` 를 주면 `http://서버:포트/healthz`, `/matches.json`, `/ranking.json`.
 - NAS(Portainer) 배포: [deploy/NAS_DEPLOY.md](deploy/NAS_DEPLOY.md).
 
+## 서버 1.3.59 · 중계 지연 개선 · 탈주 패
+
+- 중계(4901) 소켓에 서버 쪽 TCP_NODELAY 를 켭니다. 작은 명령 패킷을 앞 패킷의 ACK 를 기다리지 않고 바로 보냅니다
+  (Windows 지연 ACK 와 겹치면 패킷마다 최대 약 200ms 대기). 1.3.3 의 클라이언트 쪽 변경은 되돌린 그대로이고, 서버만 바꿉니다.
+  예전 동작: `--no-relay-nodelay`.
+- 받는 사람마다 보내기 스레드를 두어, 느린 한 명이 보내는 사람의 수신을 막지 않습니다 (8MB 넘게 밀리면 그 연결만 끊음).
+- 전적·통계·랭킹 DB 작업은 전체 잠금 밖에서 합니다. NAS 공유 폴더가 느려도 진행 중인 경기 중계가 멈추지 않습니다. 랭킹은 결과가 바뀔 때까지 캐시.
+- 중계 연결이 끝날 때 `relay disconnected ... after Ns: in N frames, largest gap Ns, largest send backlog N bytes` 와 끊긴 이유를 남깁니다.
+- 1:1 경기에서 한 명이 승리를 보고했는데 상대가 결과 없이 나갔으면(중계 연결 종료) 상대에게 패를 기록합니다. 상대가 아직 경기 중이면 기록하지 않습니다.
+- 원본 게임 규칙: 약 3분(5400틱) 안에 끝난 경기·중단은 결과 4(미집계)로 보내므로 승패에 들어가지 않습니다.
+- 시험: `tools/test_relay_latency.py`.
+
 ## 리플레이 자동 업로드 (런처 1.3.58)
 
 런처가 `<게임 폴더>\Replays\*.screplay` 를 30초마다 확인해 **사람 2명 이상 인터넷 대전** 리플레이를

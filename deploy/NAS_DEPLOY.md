@@ -39,7 +39,7 @@ data 폴더는 들어 있지 않으므로 올려도 NAS 의 계정·전적이 �
 2. `%LOCALAPPDATA%\SamchunServer\accounts.sqlite3` 를 복사해 둔다.
 3. 아래 2-4 단계에서 `game-servers/samchun-live/data/` 에 그 파일을 올린다 (컨테이너를 켜기 **전에**).
 
-새로 시작하면 이 단계는 건너뛴다. 서버 1.3.58 은 예전 DB 에 새 표(matches, match_players)만 더한다 — 기존 계정·전적은 그대로.
+새로 시작하면 이 단계는 건너뛴다. 서버 1.3.58 이상은 예전 DB 에 새 표(matches, match_players)만 더한다 — 기존 계정·전적은 그대로.
 
 ## 2. File Station (https://akansas.synology.me:5001/)
 
@@ -68,13 +68,13 @@ data 폴더는 들어 있지 않으므로 올려도 NAS 의 계정·전적이 �
    Status/ranking JSON on http://0.0.0.0:4902/ (healthz, matches.json, ranking.json)
    3KD2 compatibility server listening on 0.0.0.0:4800
    Native game relay listening on TCP 4901
-   Server 1.3.58: in-game personal ranking, match history export (/mnt/game-servers/samchun-live/data/matches.json)
+   Server 1.3.59: in-game personal ranking, match history export (/mnt/game-servers/samchun-live/data/matches.json), relay nodelay=True
    ```
 6. File Station 에서 `samchun-live/data` 에 `accounts.sqlite3`, `matches.json`, `server.log` 가 생겼는지 확인.
 
 ## 4. 접속 확인
 
-- (VM 안 / 같은 망) 브라우저 `http://<VM 내부 IP>:4902/healthz` → `{"ok": true, "version": "1.3.58", ...}`
+- (VM 안 / 같은 망) 브라우저 `http://<VM 내부 IP>:4902/healthz` → `{"ok": true, "version": "1.3.59", ...}`
 - 게임 PC 런처: **서버 주소 = `112.159.73.235`** (런처는 IPv4 숫자만 받는다. `akansas.synology.me` 는 안 됨)
   → **입력한 서버로 게임 접속** → 게임에서 **INTERNET** → 회원가입/로그인.
   NAS 서버를 쓸 때는 런처의 **인터넷 서버 구동** 버튼을 누르지 않는다 (그건 내 PC 에 서버를 켜는 버튼).
