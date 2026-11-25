@@ -8,7 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.58.0")]
+[assembly: AssemblyVersion("1.3.59.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
@@ -16,7 +16,7 @@ class Launcher : Form {
  ComboBox resolution = new ComboBox(); CheckBox stretch = new CheckBox();
  ComboBox video = new ComboBox();
  CheckBox rally = new CheckBox(); TextBox serverIp = new TextBox();
- CheckBox arenaUpload = new CheckBox(); Label arenaStatus = new Label();
+ Label arenaStatus = new Label();
  static readonly string[] Resolutions = {"1280 × 720 (16:9)", "1600 × 900 (16:9)", "1920 × 1080 (16:9)", "2560 × 1440 (16:9)", "3840 × 2160 (16:9)", "1280 × 960 (4:3)"};
  static readonly int[] Widths = {1280,1600,1920,2560,3840,1280}, Heights = {720,900,1080,1440,2160,960};
  [DllImport("kernel32", CharSet=CharSet.Unicode)] static extern bool WritePrivateProfileString(string section,string key,string value,string file);
@@ -29,7 +29,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) {string log=LauncherDiagnostics.Save(e);status.Text="실패: "+e.Message;MessageBox.Show(e.Message+(log==null?"":"\r\n오류 로그: "+log),"작업 실패");} }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.58"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.59"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -41,14 +41,14 @@ class Launcher : Form {
  Controls.Add(new Label {Text="화면 출력 크기를 확대합니다. 전장 시야 범위는 원본과 같습니다.\r\n가득 채우기 해제: 원본 화면비를 유지하며 좌우 여백을 표시합니다.",Left=28,Top=231,Width=584,Height=48});
  rally.Text="랠리·자동채집·입력창·F2/일꾼 선택 패치";rally.SetBounds(28,282,584,28);rally.Checked=true;Controls.Add(rally);
  if(File.Exists(settingsFile)){string[] values=File.ReadAllLines(settingsFile);bool value;if(values.Length>=4&&bool.TryParse(values[3],out value))rally.Checked=value;}
- var gameButton=Button("게임 실행",326,()=>{string game=Path.GetFullPath(path.Text);if(!File.Exists(game))throw new Exception("게임 파일을 찾을 수 없습니다.");if(Running(game))throw new Exception("게임이 이미 실행 중입니다.");NetworkPatch.Validate(false,"Player",serverIp.Text.Trim());rally.Checked=true;InstallWindow(game);File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);ReplayEngine.Start(game,null,serverIp.Text.Trim());status.Text="게임 실행 · 싱글/멀티·연속 경기 자동 기록 시험";});gameButton.Width=280;
- var editorButton=new Button {Text="에디터 실행",Left=320,Top=326,Width=292,Height=38};editorButton.Click+=(s,e)=>Guard(()=>{string game=Path.GetFullPath(path.Text);var start=EditorLaunch.Prepare(game);Process.Start(start);File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);status.Text=Path.GetFileName(start.FileName).Equals("3kd2Edit-modern.exe",StringComparison.OrdinalIgnoreCase)?"에디터 실행 · 최대화 / 16비트 색상 호환":"에디터 실행 · 기본 호환 모드 (이 버전은 최대화 패치 미적용)";});Controls.Add(editorButton);
- Button("해상도 / 화면모드 설정 적용",373,()=>{InstallWindow(Path.GetFullPath(path.Text));status.Text="설정 적용: "+resolution.Text+" · "+(window.Checked?"창모드":"전체화면")+". Alt+Enter로 전환 가능.";});
- Button("기존 그래픽 DLL / 설정 복원",420,()=>{string game=Path.GetFullPath(path.Text),dir=Path.GetDirectoryName(game),backup=Path.Combine(dir,"launcher-backup");if(Running(game))throw new Exception("게임을 종료한 뒤 복원하세요.");if(!File.Exists(Path.Combine(backup,"ddraw.dll")))throw new Exception("복원할 백업이 없습니다.");File.Copy(Path.Combine(backup,"ddraw.dll"),Path.Combine(dir,"ddraw.dll"),true);if(File.Exists(Path.Combine(backup,"ddraw.ini")))File.Copy(Path.Combine(backup,"ddraw.ini"),Path.Combine(dir,"ddraw.ini"),true);else if(File.Exists(Path.Combine(backup,"ini-was-absent")))File.Delete(Path.Combine(dir,"ddraw.ini"));window.Checked=false;rally.Checked=false;status.Text="기존 그래픽 설정 복원 완료. 원본 게임을 직접 실행하면 원복 상태로 실행됩니다.";});
+ var gameButton=Button("게임 실행",326,()=>{string game=GamePath();if(!File.Exists(game))throw new Exception("게임 파일(3kd2.exe)을 찾을 수 없습니다. 위쪽 '찾기' 버튼으로 게임 위치를 지정하세요.");if(Running(game))throw new Exception("게임이 이미 실행 중입니다.");NetworkPatch.Validate(false,"Player",serverIp.Text.Trim());rally.Checked=true;InstallWindow(game);File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);ReplayEngine.Start(game,null,serverIp.Text.Trim());status.Text="게임 실행 · 싱글/멀티·연속 경기 자동 기록 시험";});gameButton.Width=280;
+ var editorButton=new Button {Text="에디터 실행",Left=320,Top=326,Width=292,Height=38};editorButton.Click+=(s,e)=>Guard(()=>{string game=GamePath();var start=EditorLaunch.Prepare(game);Process.Start(start);File.WriteAllText(Path.Combine(Root,"game-path.txt"),game);status.Text=Path.GetFileName(start.FileName).Equals("3kd2Edit-modern.exe",StringComparison.OrdinalIgnoreCase)?"에디터 실행 · 최대화 / 16비트 색상 호환":"에디터 실행 · 기본 호환 모드 (이 버전은 최대화 패치 미적용)";});Controls.Add(editorButton);
+ Button("해상도 / 화면모드 설정 적용",373,()=>{InstallWindow(GamePath());status.Text="설정 적용: "+resolution.Text+" · "+(window.Checked?"창모드":"전체화면")+". Alt+Enter로 전환 가능.";});
+ Button("기존 그래픽 DLL / 설정 복원",420,()=>{string game=GamePath(),dir=Path.GetDirectoryName(game),backup=Path.Combine(dir,"launcher-backup");if(Running(game))throw new Exception("게임을 종료한 뒤 복원하세요.");if(!File.Exists(Path.Combine(backup,"ddraw.dll")))throw new Exception("복원할 백업이 없습니다.");File.Copy(Path.Combine(backup,"ddraw.dll"),Path.Combine(dir,"ddraw.dll"),true);if(File.Exists(Path.Combine(backup,"ddraw.ini")))File.Copy(Path.Combine(backup,"ddraw.ini"),Path.Combine(dir,"ddraw.ini"),true);else if(File.Exists(Path.Combine(backup,"ini-was-absent")))File.Delete(Path.Combine(dir,"ddraw.ini"));window.Checked=false;rally.Checked=false;status.Text="기존 그래픽 설정 복원 완료. 원본 게임을 직접 실행하면 원복 상태로 실행됩니다.";});
  var updateButton=Button("런처 업데이트",467,ApplyUpdate);updateButton.Width=280;
  var notesButton=new Button {Text="패치노트",Left=320,Top=467,Width=292,Height=38};notesButton.Click+=(s,e)=>Guard(()=>{using(var dialog=CreatePatchNotesWindow())dialog.ShowDialog(this);});Controls.Add(notesButton);
  Controls.Add(new Label {Left=28,Top=519,Width=584,Height=120,Text="랠리: 건물 선택 후 땅 또는 자원 우클릭 → 랠리 지정\r\n기·오어에 우클릭 또는 수동 랠리 지정 → 생산 후 채집.\r\nF2: 전장 군사 선택 / . : 쉬는 일꾼 선택 (최대 64기)\r\n\r\n생산 유닛 초기 마나: 최대치의 65%\r\n마법: 클릭당 한 기씩 순차 시전 / 건물 팔기: C"});
- var replayButton=Button("리플레이 · 시험 기능",640,()=>{InstallWindow(Path.GetFullPath(path.Text));using(var dialog=new ReplayWindow(path.Text))dialog.ShowDialog(this);});replayButton.Width=184;
+ var replayButton=Button("리플레이 · 시험 기능",640,()=>{InstallWindow(GamePath());using(var dialog=new ReplayWindow(path.Text))dialog.ShowDialog(this);});replayButton.Width=184;
  var errorLogsButton=new Button {Text="오류 폴더 열기",Left=222,Top=640,Width=184,Height=38};errorLogsButton.Click+=(s,e)=>Guard(LauncherDiagnostics.OpenFolder);Controls.Add(errorLogsButton);
  var reportButton=new Button{Text="오류 리포트 ZIP 저장",Left=416,Top=640,Width=196,Height=38};reportButton.Click+=(s,e)=>Guard(()=>{using(var dialog=new SaveFileDialog{Filter="오류 리포트 ZIP|*.zip",FileName="Samchun-ErrorReport-"+DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss")+".zip",DefaultExt="zip",AddExtension=true,OverwritePrompt=true})if(dialog.ShowDialog(this)==DialogResult.OK){LauncherDiagnostics.ExportZip(dialog.FileName);status.Text="오류 리포트 저장 완료: "+dialog.FileName;}});Controls.Add(reportButton);
  Controls.Add(new Label {Text="인터넷 플레이 · 회원가입 / 로그인 / 대기실은 게임 안에서",Left=28,Top=685,Width=584,Height=28});
@@ -57,13 +57,12 @@ class Launcher : Form {
  string networkFile=Path.Combine(Root,"network-settings.txt");if(File.Exists(networkFile)){var v=File.ReadAllLines(networkFile);if(v.Length==2){serverIp.Text=v[1];}}
  var hostButton=new Button {Text="인터넷 서버 구동",Left=28,Top=782,Width=280,Height=38};hostButton.Click+=(s,e)=>Guard(StartCompatServer);Controls.Add(hostButton);
  var joinButton=new Button {Text="입력한 서버로 게임 접속",Left=320,Top=782,Width=292,Height=38};joinButton.Click+=(s,e)=>Guard(LaunchCompat);Controls.Add(joinButton);
- arenaUpload.Text="대전 리플레이를 전적 사이트(RTS ARENA)에 자동 업로드";arenaUpload.SetBounds(28,902,400,28);Controls.Add(arenaUpload);
+ // Replay upload to RTS ARENA is always on (1.3.59): only 2+ player internet matches are sent.
  var arenaButton=new Button{Text="전적 사이트 열기",Left=432,Top=898,Width=180,Height=34};arenaButton.Click+=(s,e)=>Guard(()=>Process.Start(ArenaUpload.DefaultSite+"/samchun/matches"));Controls.Add(arenaButton);
+ Controls.Add(new Label{Text="인터넷 대전(사람 2명 이상) 리플레이는 전적 사이트에 자동으로 올라갑니다.",Left=28,Top=902,Width=400,Height=28});
  arenaStatus.SetBounds(28,934,584,24);arenaStatus.ForeColor=Color.DimGray;Controls.Add(arenaStatus);
- string arenaFile=Path.Combine(Root,"arena-upload.txt");arenaUpload.Checked=!File.Exists(arenaFile)||File.ReadAllText(arenaFile).Trim()!="off";
  ArenaUpload.StatusChanged+=text=>{if(IsHandleCreated&&!IsDisposed)try{BeginInvoke((Action)(()=>arenaStatus.Text=text));}catch(InvalidOperationException){}};
- Action arenaApply=()=>{if(arenaUpload.Checked){ArenaUpload.Start(()=>ArenaUpload.ReplayFolder(path.Text),ArenaUpload.DefaultSite);arenaStatus.Text="자동 업로드 켜짐 · 사람 2명 이상 인터넷 대전만 올립니다 (싱글 제외)";}else{ArenaUpload.Stop();arenaStatus.Text="자동 업로드 꺼짐";}};
- arenaUpload.CheckedChanged+=delegate{try{File.WriteAllText(arenaFile,arenaUpload.Checked?"on":"off");}catch(IOException){}catch(UnauthorizedAccessException){}arenaApply();};arenaApply();
+ ArenaUpload.Start(()=>ArenaUpload.ReplayFolder(path.Text),ArenaUpload.DefaultSite);arenaStatus.Text="리플레이 자동 업로드 · 대전 리플레이를 기다리는 중";
  status.SetBounds(28,837,584,60);status.Text="준비 완료 · 원본 EXE 보존, 패치 실행 파일은 별도로 생성합니다.";Controls.Add(status);
  foreach(Control control in Controls)if(control.Top>=231)control.Top+=44;
  Controls.Add(new Label{Text="게임 비디오 모드",Left=28,Top=234,Width=145,Height=28});
@@ -121,7 +120,7 @@ class Launcher : Form {
  }finally {foreach(var process in processes)process.Dispose();}
  }
  void LaunchCompat() {
- string game=Path.GetFullPath(path.Text),ip=serverIp.Text.Trim();
+ string game=GamePath(),ip=serverIp.Text.Trim();
  NetworkPatch.Validate(false,"Player",ip);
  if(Running(game))throw new Exception("게임을 종료한 뒤 실행하세요.");
  rally.Checked=true;InstallWindow(game);
@@ -142,8 +141,23 @@ class Launcher : Form {
  try{File.WriteAllBytes(temporary,data);if(Hash(temporary)!=expected)throw new InvalidDataException("내장 서버 검증 실패");if(File.Exists(exe))File.Replace(temporary,exe,null);else File.Move(temporary,exe);}finally{if(File.Exists(temporary))File.Delete(temporary);}
  }return exe;
  }
+ // Game executable from the path box. When it is missing (for example a launcher downloaded to
+ // another folder), look next to the launcher and ask the user to pick 3kd2.exe once.
+ string GamePath() {
+  string current=path.Text.Trim().Trim('"');
+  try{if(current.Length>0&&File.Exists(Path.GetFullPath(current)))return Path.GetFullPath(current);}catch(ArgumentException){}catch(NotSupportedException){}
+  foreach(string guess in new[]{Path.Combine(Root,"3kd2.exe"),Path.Combine(Root,"..","3kd2.exe")})
+   if(File.Exists(guess)){path.Text=Path.GetFullPath(guess);SaveGamePath();return path.Text;}
+  MessageBox.Show(this,"게임 실행 파일(3kd2.exe)을 찾을 수 없습니다.\r\n\r\n다음 창에서 삼국지 천명 2가 설치된 폴더의 3kd2.exe 를 선택하세요.\r\n한 번 선택하면 런처가 기억합니다.","게임 위치 지정",MessageBoxButtons.OK,MessageBoxIcon.Information);
+  using(var d=new OpenFileDialog{Title="삼국지 천명 2 게임 파일(3kd2.exe) 선택",Filter="삼국지 천명 2|3kd2.exe|실행 파일|*.exe",CheckFileExists=true}) {
+   if(d.ShowDialog(this)!=DialogResult.OK)throw new Exception("게임 위치(3kd2.exe)를 지정해야 실행할 수 있습니다. 위쪽 '찾기' 버튼으로 지정하세요.");
+   path.Text=d.FileName;
+  }
+  SaveGamePath();return path.Text;
+ }
+ void SaveGamePath(){try{File.WriteAllText(Path.Combine(Root,"game-path.txt"),path.Text);}catch(IOException){}catch(UnauthorizedAccessException){}}
  void InstallWindow(string game) {
- if(!File.Exists(game))throw new Exception("게임 파일을 찾을 수 없습니다."); if(Running(game))throw new Exception("게임을 종료한 뒤 설정하세요.");
+ if(!File.Exists(game))throw new Exception("게임 파일(3kd2.exe)을 찾을 수 없습니다. 위쪽 '찾기' 버튼으로 게임 위치를 지정하세요."); if(Running(game))throw new Exception("게임을 종료한 뒤 설정하세요.");
  VideoMode.Save(game,video.SelectedIndex);
  string graphics=GraphicsRuntime.Prepare();string dir=Path.GetDirectoryName(game),dll=Path.Combine(graphics,"ddraw.dll");Backup(dir,"ddraw.dll");Backup(dir,"ddraw.ini");string backup=Path.Combine(dir,"launcher-backup");if(!File.Exists(Path.Combine(dir,"ddraw.ini"))&&!File.Exists(Path.Combine(backup,"ddraw.ini")))File.WriteAllText(Path.Combine(backup,"ini-was-absent"),"");
  File.Copy(dll,Path.Combine(dir,"ddraw.dll"),true);string ini=Path.Combine(dir,"ddraw.ini");if(!File.Exists(ini))File.Copy(Path.Combine(graphics,"ddraw.ini"),ini);
