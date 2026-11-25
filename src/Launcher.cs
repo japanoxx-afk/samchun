@@ -8,7 +8,7 @@ using System.Reflection;
 using System.Threading;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyVersion("1.3.57.0")]
+[assembly: AssemblyVersion("1.3.58.0")]
 class Launcher : Form {
  static readonly string DefaultGame = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"3kd2.exe");
  static string Root = AppDomain.CurrentDomain.BaseDirectory;
@@ -16,6 +16,7 @@ class Launcher : Form {
  ComboBox resolution = new ComboBox(); CheckBox stretch = new CheckBox();
  ComboBox video = new ComboBox();
  CheckBox rally = new CheckBox(); TextBox serverIp = new TextBox();
+ CheckBox arenaUpload = new CheckBox(); Label arenaStatus = new Label();
  static readonly string[] Resolutions = {"1280 × 720 (16:9)", "1600 × 900 (16:9)", "1920 × 1080 (16:9)", "2560 × 1440 (16:9)", "3840 × 2160 (16:9)", "1280 × 960 (4:3)"};
  static readonly int[] Widths = {1280,1600,1920,2560,3840,1280}, Heights = {720,900,1080,1440,2160,960};
  [DllImport("kernel32", CharSet=CharSet.Unicode)] static extern bool WritePrivateProfileString(string section,string key,string value,string file);
@@ -28,7 +29,7 @@ class Launcher : Form {
  void Guard(Action action) { try { action(); } catch(Exception e) {string log=LauncherDiagnostics.Save(e);status.Text="실패: "+e.Message;MessageBox.Show(e.Message+(log==null?"":"\r\n오류 로그: "+log),"작업 실패");} }
  Button Button(string text,int y,Action action) { var b=new Button {Text=text,Left=28,Top=y,Width=584,Height=38}; b.Click+=(s,e)=>Guard(action); Controls.Add(b); return b; }
  public Launcher() {
- Text="삼국지 천명 2 런처 · 1.3.57"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+ Text="삼국지 천명 2 런처 · 1.3.58"; ClientSize=new Size(640,905); Font=new Font("맑은 고딕",10); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
  Controls.Add(new Label {Text="삼국지 천명 2",Left=28,Top=22,Width=580,Height=40,Font=new Font("맑은 고딕",22,FontStyle.Bold)});
  path.SetBounds(28,78,490,28); path.Text=File.Exists(Path.Combine(Root,"game-path.txt"))?File.ReadAllText(Path.Combine(Root,"game-path.txt")).Trim():DefaultGame; Controls.Add(path);
  var browse=new Button {Text="찾기",Left=526,Top=76,Width=86,Height=30}; browse.Click+=(s,e)=>{using(var d=new OpenFileDialog {Filter="게임|3kd2.exe"}) if(d.ShowDialog()==DialogResult.OK)path.Text=d.FileName;};Controls.Add(browse);
@@ -56,13 +57,20 @@ class Launcher : Form {
  string networkFile=Path.Combine(Root,"network-settings.txt");if(File.Exists(networkFile)){var v=File.ReadAllLines(networkFile);if(v.Length==2){serverIp.Text=v[1];}}
  var hostButton=new Button {Text="인터넷 서버 구동",Left=28,Top=782,Width=280,Height=38};hostButton.Click+=(s,e)=>Guard(StartCompatServer);Controls.Add(hostButton);
  var joinButton=new Button {Text="입력한 서버로 게임 접속",Left=320,Top=782,Width=292,Height=38};joinButton.Click+=(s,e)=>Guard(LaunchCompat);Controls.Add(joinButton);
+ arenaUpload.Text="대전 리플레이를 전적 사이트(RTS ARENA)에 자동 업로드";arenaUpload.SetBounds(28,902,400,28);Controls.Add(arenaUpload);
+ var arenaButton=new Button{Text="전적 사이트 열기",Left=432,Top=898,Width=180,Height=34};arenaButton.Click+=(s,e)=>Guard(()=>Process.Start(ArenaUpload.DefaultSite+"/samchun/matches"));Controls.Add(arenaButton);
+ arenaStatus.SetBounds(28,934,584,24);arenaStatus.ForeColor=Color.DimGray;Controls.Add(arenaStatus);
+ string arenaFile=Path.Combine(Root,"arena-upload.txt");arenaUpload.Checked=!File.Exists(arenaFile)||File.ReadAllText(arenaFile).Trim()!="off";
+ ArenaUpload.StatusChanged+=text=>{if(IsHandleCreated&&!IsDisposed)try{BeginInvoke((Action)(()=>arenaStatus.Text=text));}catch(InvalidOperationException){}};
+ Action arenaApply=()=>{if(arenaUpload.Checked){ArenaUpload.Start(()=>ArenaUpload.ReplayFolder(path.Text),ArenaUpload.DefaultSite);arenaStatus.Text="자동 업로드 켜짐 · 사람 2명 이상 인터넷 대전만 올립니다 (싱글 제외)";}else{ArenaUpload.Stop();arenaStatus.Text="자동 업로드 꺼짐";}};
+ arenaUpload.CheckedChanged+=delegate{try{File.WriteAllText(arenaFile,arenaUpload.Checked?"on":"off");}catch(IOException){}catch(UnauthorizedAccessException){}arenaApply();};arenaApply();
  status.SetBounds(28,837,584,60);status.Text="준비 완료 · 원본 EXE 보존, 패치 실행 파일은 별도로 생성합니다.";Controls.Add(status);
  foreach(Control control in Controls)if(control.Top>=231)control.Top+=44;
  Controls.Add(new Label{Text="게임 비디오 모드",Left=28,Top=234,Width=145,Height=28});
  video.SetBounds(175,230,330,30);video.DropDownStyle=ComboBoxStyle.DropDownList;video.Items.AddRange(VideoMode.Names);video.SelectedIndex=VideoMode.Read(path.Text);Controls.Add(video);
  video.SelectedIndexChanged+=delegate{if(video.SelectedIndex==1||video.SelectedIndex==2)status.Text="Direct3D·Voodoo 호환 드라이버로 선택한 모드를 적용합니다. 창모드 설정을 지원하며 실제 적용 모드를 확인합니다.";};
  path.TextChanged+=delegate{video.SelectedIndex=VideoMode.Read(path.Text);};
- AutoScroll=true;AutoScrollMinSize=new Size(640,949);ClientSize=new Size(640,Math.Min(949,Math.Max(500,Screen.PrimaryScreen.WorkingArea.Height-60)));
+ AutoScroll=true;AutoScrollMinSize=new Size(640,1010);ClientSize=new Size(640,Math.Min(1010,Math.Max(500,Screen.PrimaryScreen.WorkingArea.Height-60)));
  Shown+=delegate{ApplyUpdate(true);};
  string videoReport=Path.Combine(LauncherDiagnostics.Folder,"video-last.json");DateTime lastVideo=File.Exists(videoReport)?File.GetLastWriteTimeUtc(videoReport):DateTime.MinValue;
  var videoTimer=new System.Windows.Forms.Timer{Interval=1000};videoTimer.Tick+=delegate{try{if(!File.Exists(videoReport)||File.GetLastWriteTimeUtc(videoReport)==lastVideo)return;var report=new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(videoReport));lastVideo=File.GetLastWriteTimeUtc(videoReport);status.Text=(report.ContainsKey("failed")&&Convert.ToBoolean(report["failed"])?"비디오 초기화 실패 · 오류 리포트 ZIP을 저장해 주세요. ":"비디오 모드 · ")+"요청: "+Convert.ToString(report["requested"])+" / 실제 적용: "+Convert.ToString(report["actual"])+(Convert.ToBoolean(report["fallback"])?" · 요청 모드 초기화 실패. 오류 리포트 ZIP으로 상세 정보를 저장할 수 있습니다.":"");}catch(IOException){}catch(ArgumentException){} };videoTimer.Start();FormClosed+=delegate{videoTimer.Dispose();if(updateTimer!=null)updateTimer.Dispose();};
@@ -178,6 +186,7 @@ class Launcher : Form {
  if(args.Length==2&&args[0]=="--prepare") {try {using(var form=new Launcher()){string game=Path.GetFullPath(args[1]);if(Running(game))throw new Exception("게임이 실행 중입니다.");if(form.rally.Checked)GamePatches.Build(game,Path.Combine(Path.GetDirectoryName(game),"3kd2-modern.exe"));form.InstallWindow(game);Console.WriteLine("Game patch and display settings prepared.");return 0;}}catch(Exception e){Console.WriteLine(e.Message);return 1;}}
  if(args.Length==3&&args[0]=="--build-game") {try {Console.WriteLine(GamePatches.Build(args[1],args[2]));return 0;}catch(Exception e){Console.WriteLine(e.Message);return 1;}}
  if(args.Length==4&&args[0]=="--apply") {string target=args[2],source=args[3];try { try {if(!Process.GetProcessById(int.Parse(args[1])).WaitForExit(15000))throw new Exception("기존 런처 종료 대기시간 초과");}catch(ArgumentException){} if(!string.Equals(Hash(source),File.ReadAllText(Path.Combine(Path.GetDirectoryName(source),"SHA256.txt")).Trim(),StringComparison.OrdinalIgnoreCase))throw new Exception("SHA256 불일치");File.Copy(target,target+".bak",true);try {File.Copy(source,target,true);}catch {File.Copy(target+".bak",target,true);throw;}Process.Start(target);return 0;}catch(Exception e){MessageBox.Show("업데이트 실패: "+e.Message);return 1;} }
+ if((args.Length==2||args.Length==3)&&args[0]=="--arena-upload") {try {foreach(string line in ArenaUpload.Scan(args[1],args.Length==3?args[2]:ArenaUpload.DefaultSite,ArenaSecret.Token,DateTime.UtcNow))Console.WriteLine(line);return 0;}catch(Exception e){Console.WriteLine(e.Message);return 1;}}
  if(args.Length==1&&args[0]=="--self-test") {Console.WriteLine("Version="+Assembly.GetExecutingAssembly().GetName().Version+"; Game="+File.Exists(DefaultGame)+"; Runtime="+File.Exists(Path.Combine(Root,@"runtime\cnc-ddraw\ddraw.dll"))+"; SHA256="+Hash(Application.ExecutablePath));return File.Exists(DefaultGame)&&File.Exists(Path.Combine(Root,@"runtime\cnc-ddraw\ddraw.dll"))?0:1;}
  Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);Application.ThreadException+=(s,e)=>{string log=LauncherDiagnostics.Save(e.Exception);MessageBox.Show("런처 오류: "+e.Exception.Message+(log==null?"":"\r\n오류 로그: "+log),"런처 오류");};AppDomain.CurrentDomain.UnhandledException+=(s,e)=>LauncherDiagnostics.Save(e.ExceptionObject as Exception ?? new Exception("Unknown launcher exception"));
  Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new Launcher());return 0;

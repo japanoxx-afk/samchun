@@ -225,6 +225,20 @@ Python 및 PyInstaller 배포 고지는 licenses/에 포함합니다.
   `--http-port` 를 주면 `http://서버:포트/healthz`, `/matches.json`, `/ranking.json`.
 - NAS(Portainer) 배포: [deploy/NAS_DEPLOY.md](deploy/NAS_DEPLOY.md).
 
+## 리플레이 자동 업로드 (런처 1.3.58)
+
+런처가 `<게임 폴더>\Replays\*.screplay` 를 30초마다 확인해 **사람 2명 이상 인터넷 대전** 리플레이를
+RTS ARENA(`http://112.159.73.235:30013`, `POST /api/samchun/replays`)에 올립니다. 코드: `src/ArenaUpload.cs`.
+
+- 올리지 않음: `multiplayer=false`(싱글·나 + 컴퓨터), 이름 있는 참가자 2명 미만, `_test`·`_diagnostic`·진단 기록,
+  저장 후 15초가 안 된 파일, 64MB 초과.
+- 처리 기록: `%LOCALAPPDATA%\SamchunLauncher\arena-upload.json` (지우면 다시 검사, 사이트는 SHA-256 으로 중복 무시).
+  연결 실패·업로드 키 오류는 기록하지 않고 30초 뒤 다시 시도합니다.
+- 런처 아래 체크박스로 끄고 켭니다 (`arena-upload.txt` 에 on/off 저장). 수동 확인: `launcher.exe --arena-upload <Replays 폴더> [사이트 주소]`.
+- 사이트는 리플레이 참가자·시각으로 호환 서버 경기에 붙이고 승패는 서버 결과를 씁니다. 같은 경기를 두 사람이 올리면 둘 다 보관.
+- **업로드 키**: 빌드할 때 `$env:ARENA_UPLOAD_TOKEN` 또는 저장소 폴더의 `arena-token.txt`(git 제외) 값을 넣습니다.
+  rtsarena 스택의 `ARENA_UPLOAD_TOKEN`(라크무 런처와 같은 값)과 같아야 합니다. 없으면 사이트가 401 로 거절합니다.
+
 ## 계정 전적
 
 1.3.4는 대전 종료 결과를 accounts.sqlite3의 match_results 테이블에 누적합니다.

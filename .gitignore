@@ -18,3 +18,4 @@ README-1.*.txt
 *.log
 /server-data/
 /deploy/upload/
+arena-token.txt
